@@ -1,20 +1,9 @@
 <template>
   <q-page class="column items-center q-pa-md q-gutter-md">
     <MicLevelBar />
-    <q-btn
-      color="secondary"
-      class="q-mb-lg"
-      label="Проверить задержку"
-      icon="timer"
-      @click="latencyCheck"
-      size="md"
-    />
-    <div v-if="latencyMs !== null" class="q-mb-lg text-h6">
-      Задержка: {{ latencyMs }} мс
-    </div>
-    <div class="row items-center justify-evenly q-gutter-md">
+    <div class="looper-grid q-mb-md">
       <LoopTrack
-        v-for="id in 3"
+        v-for="id in 4"
         :key="id"
         :loopId="id"
         ref="loopRefs"
@@ -23,6 +12,17 @@
         :canRecord="id === 1 || (masterDuration > 0)"
         :masterDuration="masterDuration || 0"
       />
+    </div>
+    <q-btn
+      color="secondary"
+      class="latency-btn q-mt-xl"
+      label="Проверить задержку"
+      icon="timer"
+      @click="latencyCheck"
+      size="md"
+    />
+    <div v-if="latencyMs !== null" class="q-mb-lg text-h6">
+      Задержка: {{ latencyMs }} мс
     </div>
   </q-page>
 </template>
@@ -132,3 +132,24 @@ async function latencyCheck() {
   latencyMs.value = latency;
 }
 </script>
+
+<style scoped>
+.looper-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+  gap: 48px 64px;
+  justify-items: center;
+  align-items: center;
+  margin-top: 32px;
+  margin-bottom: 32px;
+}
+.latency-btn {
+  display: block;
+  margin: 0 auto;
+  min-width: 220px;
+  font-size: 1.1rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+</style>

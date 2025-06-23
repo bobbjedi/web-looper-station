@@ -1,44 +1,73 @@
 <template>
-  <q-card class="q-pa-md q-mb-md flex flex-column items-center" style="min-width: 250px; max-width: 350px;">
-    <div class="text-h6 flex items-center">
-      Луп {{ props.loopId }}
-      <q-badge class="q-ml-sm" :color="audioUrl ? 'green' : 'grey'">
-        {{ audioUrl ? 'Есть запись' : 'Пусто' }}
-      </q-badge>
-    </div>
-
+  <div class="loop-track-wrapper flex flex-column items-center q-mb-lg">
     <!-- Круговой прогресс -->
-    <div class="q-mt-md">
+    <div class="circle-wrapper">
       <CircularProgress
         :progress="progressValue"
         :duration="masterDuration"
         :color="progressColor"
         :backgroundColor="circleBgColor"
-        :showText="false"
         :size="100"
+        @click="handleCircleClick"
+        :class="{
+          'clickable': canStartRecording || isRecording || (audioUrl && !isRecording),
+          'empty-loop': !audioUrl && !isRecording && !isWaitingForSound,
+          'recording-pulse': isRecording || isWaitingForSound
+        }"
       >
         <template #default>
-          <q-icon v-if="isRecording" name="mic" color="red" size="36px" />
-          <q-icon v-else-if="isPlaying || isInCycle" name="play_arrow" color="green" size="36px" />
-          <q-icon v-else-if="audioUrl" name="check_circle" color="primary" size="36px" />
-          <q-icon v-else name="radio_button_unchecked" color="grey" size="36px" />
+          <q-icon
+            v-if="isRecording"
+            name="mic"
+            color="red"
+            size="36px"
+            class="recording-icon"
+          />
+          <q-icon
+            v-else-if="isWaitingForSound"
+            name="mic"
+            color="orange"
+            size="36px"
+            class="waiting-icon"
+          />
+          <q-icon
+            v-else-if="isPlaying || isInCycle"
+            name="play_arrow"
+            color="green"
+            size="36px"
+            class="playing-icon"
+          />
+          <q-icon
+            v-else-if="audioUrl"
+            name="check_circle"
+            color="primary"
+            size="36px"
+            class="recorded-icon"
+          />
+          <q-icon
+            v-else
+            name="mic"
+            color="primary"
+            size="42px"
+            class="empty-mic-icon"
+          />
         </template>
       </CircularProgress>
     </div>
-
-    <div class="q-mt-md column items-stretch">
-      <q-btn :color="isRecording ? 'red' : 'primary'" icon="mic" @click="toggleRecording" :label="isRecording ? 'Стоп' : isWaitingForSound ? 'Жду звук...' : 'Запись'" class="btn-fixed q-mb-sm" :disable="props.canRecord === false || (isWaitingForSound && !isRecording)" />
-      <q-btn :color="isMuted ? 'grey' : 'primary'" :icon="isMuted ? 'volume_off' : 'volume_up'" @click="toggleMute" :label="isMuted ? 'Заглушен' : 'Mute'" :disable="!audioUrl" class="btn-fixed q-mb-sm" />
-      <q-btn color="negative" icon="delete" @click="resetLoop" label="Сброс" class="btn-fixed" />
-    </div>
-    <div class="q-mt-md">
-      <q-badge v-if="isWaitingForSound" color="orange">Жду звук для старта...</q-badge>
-      <q-badge v-else-if="isRecording" color="red">Запись...</q-badge>
-      <q-badge v-else-if="isPlaying || isInCycle" color="green">Воспроизведение</q-badge>
-      <q-badge v-else color="grey">Ожидание</q-badge>
+    <div class="reset-btn-wrapper">
+      <q-btn
+        color="grey-8"
+        icon="delete"
+        @click="resetLoop"
+        label="Сбросить"
+        class="reset-btn q-mt-md"
+        flat
+        rounded
+        size="md"
+      />
     </div>
     <audio v-if="audioUrl" :src="audioUrl" ref="audioRef" style="display:none" />
-  </q-card>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -71,6 +100,10 @@ let progressTimer: number | null = null;
 // Computed свойства для прогресса
 const masterDuration = computed(() => {
   return Number(props.masterDuration) || 0;
+});
+
+const canStartRecording = computed(() => {
+  return !audioUrl.value && !isRecording.value && props.canRecord !== false;
 });
 
 const shouldShowProgress = computed(() => {
@@ -287,13 +320,6 @@ function stopAudio() {
   }
 }
 
-function toggleMute() {
-  isMuted.value = !isMuted.value;
-  if (audioRef.value) {
-    audioRef.value.volume = isMuted.value ? 0 : 1;
-  }
-}
-
 function resetLoop() {
   if (isRecording.value) {
     stopRecording();
@@ -314,6 +340,45 @@ watch(isMuted, (val) => {
   }
 });
 
+function handleCircleClick() {
+  // Если записываем - останавливаем запись
+  if (isRecording.value) {
+    stopRecording();
+    return;
+  }
+
+  // Если можно начать запись - запускаем
+  if (canStartRecording.value) {
+    // Добавляем тактильную обратную связь
+    if (navigator.vibrate) {
+      navigator.vibrate(50); // короткая вибрация 50мс
+    }
+
+    // Добавляем визуальную обратную связь
+    const circle = document.querySelector('.clickable') as HTMLElement;
+    if (circle) {
+      circle.style.transform = 'scale(0.95)';
+      setTimeout(() => {
+        circle.style.transform = '';
+      }, 150);
+    }
+
+    toggleRecording();
+  } else if (audioUrl.value && !isRecording.value) {
+    // Если есть запись и не записываем - управляем воспроизведением и mute
+    if (isPlaying.value) {
+      // Если воспроизводится - переключаем mute
+      isMuted.value = !isMuted.value;
+      if (audioRef.value) {
+        audioRef.value.volume = isMuted.value ? 0 : 1;
+      }
+    } else {
+      // Если не воспроизводится - запускаем воспроизведение
+      playAudio();
+    }
+  }
+}
+
 defineExpose({ playAudio, stopAudio, isPlaying, audioUrl, audioDuration, isInCycle });
 
 onUnmounted(() => {
@@ -323,6 +388,51 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.loop-track-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  background: none;
+  box-shadow: none;
+  border: none;
+  min-width: 250px;
+  max-width: 350px;
+}
+.circle-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.reset-btn-wrapper {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+.reset-btn {
+  background: rgba(80,80,80,0.12);
+  color: #fff;
+  border-radius: 24px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  transition: background 0.2s, color 0.2s, box-shadow 0.2s;
+  margin-top: 18px;
+  margin-bottom: 0;
+  min-width: 120px;
+}
+.reset-btn:hover {
+  background: rgba(80,80,80,0.22);
+  color: #fff;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+}
+.reset-btn:active {
+  background: rgba(80,80,80,0.32);
+  color: #eee;
+}
+
 .q-card {
   width: 100%;
 }
@@ -330,5 +440,152 @@ onUnmounted(() => {
 .btn-fixed {
   min-width: 120px;
   justify-content: center;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+.btn-fixed:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.btn-fixed:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+}
+
+/* Специальные стили для кнопки записи */
+.btn-fixed:has(.q-icon[name="mic"]) {
+  background: linear-gradient(135deg, #1976d2, #42a5f5);
+  border: none;
+}
+
+.btn-fixed:has(.q-icon[name="mic"]):hover {
+  background: linear-gradient(135deg, #1565c0, #1976d2);
+}
+
+/* Анимация для кнопки записи во время записи */
+.btn-fixed:has(.q-icon[name="mic"]):has(.text-red) {
+  animation: recording-button-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes recording-button-pulse {
+  0%, 100% {
+    box-shadow: 0 4px 12px rgba(244, 67, 54, 0.3);
+  }
+  50% {
+    box-shadow: 0 4px 20px rgba(244, 67, 54, 0.6);
+  }
+}
+
+.clickable {
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.clickable:hover {
+  transform: scale(1.05);
+  filter: brightness(1.1);
+}
+
+.clickable:active {
+  transform: scale(0.95);
+}
+
+.empty-loop {
+  position: relative;
+}
+
+.empty-loop::before {
+  content: '';
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  right: -2px;
+  bottom: -2px;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg, #1976d2, #42a5f5, #1976d2, #42a5f5, #1976d2);
+  background-size: 100% 100%;
+  animation: shimmer-rotate 2s linear infinite;
+  z-index: -1;
+  opacity: 0.4;
+}
+
+.recording-pulse {
+  border-radius: 50%;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.empty-mic-icon {
+  filter: drop-shadow(0 2px 4px rgba(25, 118, 210, 0.3));
+  transition: all 0.3s ease;
+}
+
+.clickable:hover .empty-mic-icon {
+  transform: scale(1.1);
+  filter: drop-shadow(0 4px 8px rgba(25, 118, 210, 0.5));
+}
+
+.recording-icon {
+  animation: recording-bounce 0.6s ease-in-out infinite;
+  filter: drop-shadow(0 2px 4px rgba(244, 67, 54, 0.5));
+}
+
+.waiting-icon {
+  animation: waiting-rotate 2s linear infinite;
+  filter: drop-shadow(0 2px 4px rgba(255, 152, 0, 0.5));
+}
+
+.playing-icon {
+  animation: playing-pulse 1s ease-in-out infinite;
+  filter: drop-shadow(0 2px 4px rgba(76, 175, 80, 0.5));
+}
+
+.recorded-icon {
+  filter: drop-shadow(0 2px 4px rgba(25, 118, 210, 0.5));
+}
+
+@keyframes shimmer-rotate {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(244, 67, 54, 0.7);
+  }
+  50% {
+    transform: scale(1.02);
+    box-shadow: 0 0 0 10px rgba(244, 67, 54, 0);
+  }
+}
+
+@keyframes recording-bounce {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+}
+
+@keyframes waiting-rotate {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes playing-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}
+
+/* Улучшенные стили для подсказки */
+.text-caption {
+  font-size: 0.75rem;
+  line-height: 1.2;
+  opacity: 0.8;
+  transition: opacity 0.3s ease;
+}
+
+.clickable:hover + .text-caption {
+  opacity: 1;
 }
 </style>

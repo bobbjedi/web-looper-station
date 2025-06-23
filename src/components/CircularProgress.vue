@@ -1,5 +1,5 @@
 <template>
-  <div class="circular-progress-container">
+  <div class="circular-progress-container" @click="handleClick">
     <svg class="circular-progress" :width="size" :height="size" viewBox="0 0 100 100">
       <!-- Фоновый круг (заливка) -->
       <circle
@@ -33,7 +33,7 @@
         class="progress-circle"
       />
     </svg>
-    <div class="progress-text" v-if="showText">
+    <div class="progress-content">
       <slot>{{ formattedTime }}</slot>
     </div>
   </div>
@@ -48,13 +48,13 @@ const props = defineProps<{
   size?: number;
   color?: string;
   backgroundColor?: string;
-  showText?: boolean;
 }>();
+
+const emit = defineEmits(['click']);
 
 const size = computed(() => props.size || 120);
 const progressColor = computed(() => props.color || '#1976d2');
 const backgroundColor = computed(() => props.backgroundColor || 'rgba(255,255,255,0.05)');
-const showText = computed(() => props.showText !== false);
 
 const circumference = 2 * Math.PI * 45; // 2πr, где r=45
 
@@ -68,6 +68,10 @@ const formattedTime = computed(() => {
   const seconds = Math.floor(currentTime % 60);
   return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 });
+
+function handleClick() {
+  emit('click');
+}
 </script>
 
 <style scoped>
@@ -86,7 +90,7 @@ const formattedTime = computed(() => {
   filter: drop-shadow(0 1px 2px rgba(0,0,0,0.2));
 }
 
-.progress-text {
+.progress-content {
   position: absolute;
   top: 50%;
   left: 50%;
@@ -96,5 +100,10 @@ const formattedTime = computed(() => {
   color: var(--q-primary);
   pointer-events: none;
   text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
 }
 </style>
