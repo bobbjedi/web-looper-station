@@ -1,6 +1,27 @@
+# Node
+node_modules/
+
+# Build
+/dist
+/.quasar
+
+# Env
+.env*
+
+# VSCode
+.vscode/
+
+# Mac
 .DS_Store
-.thumbs.db
-node_modules
+
+# Log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Quasar
+quasar.conf.js
+quasar.config.*
 
 # Quasar core related directories
 .quasar
@@ -16,11 +37,6 @@ node_modules
 # Capacitor related directories and files
 /src-capacitor/www
 /src-capacitor/node_modules
-
-# Log files
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
 
 # Editor directories and files
 .idea
