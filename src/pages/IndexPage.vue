@@ -137,12 +137,11 @@ async function latencyCheck() {
 .looper-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  grid-template-rows: repeat(2, 1fr);
-  gap: 48px 64px;
+  gap: 40px 20px;
   justify-items: center;
   align-items: center;
-  margin-top: 32px;
-  margin-bottom: 32px;
+  margin-top: 24px;
+  margin-bottom: 24px;
 }
 .latency-btn {
   display: block;
@@ -151,5 +150,18 @@ async function latencyCheck() {
   font-size: 1.1rem;
   font-weight: 500;
   letter-spacing: 0.04em;
+}
+@media (max-width: 600px) {
+  .looper-grid {
+    gap: 28px 8px;
+    margin-top: 10px;
+    margin-bottom: 10px;
+  }
+  .latency-btn {
+    min-width: 90vw;
+    font-size: 1rem;
+    margin-top: 24px;
+    margin-bottom: 10px;
+  }
 }
 </style>

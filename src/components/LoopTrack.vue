@@ -1,7 +1,18 @@
 <template>
   <div class="loop-track-wrapper flex flex-column items-center q-mb-lg">
     <!-- Круговой прогресс -->
-    <div class="circle-wrapper">
+    <div class="circle-wrapper"
+      @wheel.prevent="onWheelVolume"
+      @touchstart="onTouchStart"
+      @touchmove="onTouchMove"
+      @touchend="onTouchEnd"
+      @mouseenter="showVolume = true"
+      @mouseleave="showVolume = false"
+    >
+      <div v-if="showVolume || isTouching" class="volume-indicator">
+        <q-icon name="volume_up" size="20px" class="q-mr-xs" />
+        {{ Math.round(volume * 100) }}%
+      </div>
       <CircularProgress
         :progress="progressValue"
         :duration="masterDuration"
@@ -9,6 +20,7 @@
         :backgroundColor="circleBgColor"
         :size="100"
         @click="handleCircleClick"
+        @touchend="handleCircleClick"
         :class="{
           'clickable': canStartRecording || isRecording || (audioUrl && !isRecording),
           'empty-loop': !audioUrl && !isRecording && !isWaitingForSound,
@@ -96,6 +108,50 @@ let dataArray: Uint8Array = new Uint8Array(0);
 let waitSoundTimer: number | null = null;
 let autoStopTimer: number | null = null;
 let progressTimer: number | null = null;
+
+// Громкость
+const volume = ref(1); // от 0 до 1
+const showVolume = ref(false);
+const isTouching = ref(false);
+let lastTouchY = 0;
+
+function setVolume(val: number) {
+  volume.value = Math.max(0, Math.min(1, val));
+  if (audioRef.value) {
+    audioRef.value.volume = isMuted.value ? 0 : volume.value;
+  }
+}
+
+function onWheelVolume(e: WheelEvent) {
+  const delta = e.deltaY < 0 ? 0.05 : -0.05;
+  setVolume(volume.value + delta);
+  showVolume.value = true;
+  // Типизация таймера без any
+  const fn = onWheelVolume as unknown as Record<string, unknown>;
+  if (fn._timer) {
+    clearTimeout(fn._timer as number);
+  }
+  fn._timer = window.setTimeout(() => showVolume.value = false, 1200);
+}
+
+function onTouchStart(e: TouchEvent) {
+  if (e.touches.length === 1 && e.touches[0]) {
+    isTouching.value = true;
+    lastTouchY = e.touches[0].clientY;
+  }
+}
+function onTouchMove(e: TouchEvent) {
+  if (isTouching.value && e.touches.length === 1 && e.touches[0]) {
+    const dy = lastTouchY - e.touches[0].clientY;
+    lastTouchY = e.touches[0].clientY;
+    setVolume(volume.value + dy * 0.005); // чувствительность
+  }
+}
+function onTouchEnd() {
+  isTouching.value = false;
+  setTimeout(() => showVolume.value = false, 1000);
+  handleCircleClick();
+}
 
 // Computed свойства для прогресса
 const masterDuration = computed(() => {
@@ -296,7 +352,7 @@ function playAudio() {
       emit('ended');
     };
     // Устанавливаем громкость в зависимости от mute
-    audioRef.value.volume = isMuted.value ? 0 : 1;
+    audioRef.value.volume = isMuted.value ? 0 : volume.value;
     // Все лупы обрезаются по masterDuration для синхронизации
     if (props.masterDuration && props.masterDuration > 0) {
       setTimeout(() => {
@@ -335,8 +391,14 @@ function resetLoop() {
 
 // Если mute меняется во время воспроизведения
 watch(isMuted, (val) => {
-  if (audioRef.value) {
-    audioRef.value.volume = val ? 0 : 1;
+  if (audioRef.value && typeof audioRef.value.volume === 'number') {
+    audioRef.value.volume = val ? 0 : volume.value;
+  }
+});
+
+watch(volume, (val) => {
+  if (audioRef.value && !isMuted.value && typeof audioRef.value.volume === 'number') {
+    audioRef.value.volume = val;
   }
 });
 
@@ -370,7 +432,7 @@ function handleCircleClick() {
       // Если воспроизводится - переключаем mute
       isMuted.value = !isMuted.value;
       if (audioRef.value) {
-        audioRef.value.volume = isMuted.value ? 0 : 1;
+        audioRef.value.volume = isMuted.value ? 0 : volume.value;
       }
     } else {
       // Если не воспроизводится - запускаем воспроизведение
@@ -404,6 +466,7 @@ onUnmounted(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  position: relative;
 }
 .reset-btn-wrapper {
   width: 100%;
@@ -422,6 +485,7 @@ onUnmounted(() => {
   margin-top: 18px;
   margin-bottom: 0;
   min-width: 120px;
+  font-size: 1rem;
 }
 .reset-btn:hover {
   background: rgba(80,80,80,0.22);
@@ -587,5 +651,53 @@ onUnmounted(() => {
 
 .clickable:hover + .text-caption {
   opacity: 1;
+}
+
+.volume-indicator {
+  position: absolute;
+  top: -28px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(30,30,40,0.92);
+  color: #fff;
+  border-radius: 12px;
+  padding: 2px 14px 2px 10px;
+  font-size: 1.05rem;
+  font-weight: 500;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.13);
+  z-index: 10;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  opacity: 0.97;
+  user-select: none;
+}
+
+@media (max-width: 600px) {
+  .loop-track-wrapper {
+    min-width: 0;
+    max-width: 96vw;
+    margin-bottom: 18px;
+  }
+  .circle-wrapper {
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    margin-left: auto;
+    margin-right: auto;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+  .reset-btn {
+    min-width: 44vw;
+    font-size: 0.98rem;
+    margin-top: 10px;
+  }
+  .volume-indicator {
+    font-size: 0.95rem;
+    top: -22px;
+    padding: 2px 10px 2px 8px;
+  }
 }
 </style>

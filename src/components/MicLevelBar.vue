@@ -51,12 +51,22 @@ onUnmounted(() => {
 <style scoped>
 .mic-bar-outer {
   width: 100vw;
-  max-width: 100%;
+  max-width: 480px;
   height: 18px;
   background: #222;
   border-radius: 8px;
   overflow: hidden;
   margin-bottom: 16px;
+}
+@media (max-width: 600px) {
+  .mic-bar-outer {
+    width: 90vw;
+    max-width: 90vw;
+    margin-left: auto;
+    margin-right: auto;
+    margin: 12px auto 16px auto;
+    box-sizing: border-box;
+  }
 }
 .mic-bar-inner {
   height: 100%;
