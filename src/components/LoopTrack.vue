@@ -1,6 +1,6 @@
 <template>
   <div class="loop-track-wrapper flex flex-column items-center q-mb-lg">
-    <!-- Круговой прогресс -->
+    <!-- Универсальный круговой прогресс -->
     <div class="circle-wrapper"
       @wheel.prevent="onWheelVolume"
       @touchstart="onTouchStart"
@@ -14,10 +14,10 @@
         {{ Math.round(volume * 100) }}%
       </div>
       <CircularProgress
-        :progress="progressValue"
+        :progress="universalProgress"
         :duration="masterDuration"
-        :color="progressColor"
-        :backgroundColor="circleBgColor"
+        :color="universalProgressColor"
+        :backgroundColor="universalBackgroundColor"
         :size="100"
         @click="handleCircleClick"
         @touchend="handleCircleClick"
@@ -92,10 +92,17 @@
 <script setup lang="ts">
 import { ref, defineExpose, watch, defineEmits, onUnmounted, computed } from 'vue';
 import CircularProgress from './CircularProgress.vue';
+import { syncStore } from '../stores/sync-store';
 
-const props = defineProps<{ loopId: number, canRecord?: boolean, masterDuration?: number }>();
+const props = defineProps<{
+  loopId: number,
+  canRecord?: boolean,
+  masterDuration?: number,
+  masterDurationSec?: number,
+  cycleStartTime?: number
+}>();
 
-const emit = defineEmits(['ended']);
+const emit = defineEmits(['ended', 'first-recorded']);
 
 const isRecording = ref(false);
 const isPlaying = ref(false);
@@ -122,6 +129,28 @@ const volume = ref(1); // от 0 до 1
 const showVolume = ref(false);
 const isTouching = ref(false);
 let lastTouchY = 0;
+
+// Универсальные computed свойства для всех состояний
+const universalProgress = computed(() => {
+  if (isWaitingForSync.value && syncStore.isSyncActive.value) {
+    return syncStore.currentCycleProgress.value;
+  }
+  return progressValue.value;
+});
+
+const universalProgressColor = computed(() => {
+  if (isWaitingForSync.value) {
+    return 'yellow';
+  }
+  return progressColor.value;
+});
+
+const universalBackgroundColor = computed(() => {
+  if (isWaitingForSync.value) {
+    return 'rgba(255, 235, 59, 0.13)';
+  }
+  return circleBgColor.value;
+});
 
 function setVolume(val: number) {
   volume.value = Math.max(0, Math.min(1, val));
@@ -199,7 +228,8 @@ function toggleRecording() {
     if (props.loopId === 1) {
       waitForSoundStart();
     } else {
-      startRecording().catch(console.error);
+      console.log('Setting isWaitingForSync = true for loopId:', props.loopId);
+      isWaitingForSync.value = true;
     }
   } else {
     stopRecording();
@@ -249,6 +279,13 @@ function stopMicMonitor() {
 
 async function startRecording() {
   isWaitingForSound.value = false;
+
+  // Для первого лупа запускаем глобальную синхронизацию
+  if (props.loopId === 1) {
+    // Запускаем синхронизацию с примерной длительностью (будет обновлена после записи)
+    syncStore.startSync(5); // временная длительность
+  }
+
   // Проверка masterDuration для не первого лупа
   if (props.loopId !== 1) {
     const md = Number(props.masterDuration);
@@ -269,7 +306,6 @@ async function startRecording() {
   };
   mediaRecorder.onstop = async () => {
     console.log('MediaRecorder onstop', props.loopId, audioChunks.length);
-    isRecording.value = false;
     if (audioChunks.length === 0) return;
     const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
     if (audioBlob.size === 0) return;
@@ -300,10 +336,9 @@ async function startRecording() {
         }
       };
     }
-    // Автоматически запускаем воспроизведение после записи
-    if (audioUrl.value) {
-      playAudio();
-    }
+
+    // Вызываем централизованную обработку завершения записи
+    onRecordingComplete();
   };
   mediaRecorder.start();
   isRecording.value = true;
@@ -436,6 +471,7 @@ function handleCircleClick() {
     if (props.loopId === 1) {
       toggleRecording();
     } else {
+      console.log('Setting isWaitingForSync = true for loopId:', props.loopId);
       isWaitingForSync.value = true;
     }
   } else if (audioUrl.value && !isRecording.value) {
@@ -454,10 +490,27 @@ function handleCircleClick() {
 }
 
 function startSyncedRecording() {
+  console.log('startSyncedRecording called for loopId:', props.loopId, 'isWaitingForSync:', isWaitingForSync.value);
   if (isWaitingForSync.value) {
     isWaitingForSync.value = false;
+    console.log('Starting synced recording for loopId:', props.loopId);
     void startRecording();
   }
+}
+
+function onRecordingComplete() {
+  isRecording.value = false;
+  if (mediaRecorder) {
+    mediaRecorder = null;
+  }
+
+  // Для первого лупа обновляем длительность синхронизации
+  if (props.loopId === 1 && audioDuration.value) {
+    syncStore.startSync(audioDuration.value);
+    console.log('Updated sync duration to:', audioDuration.value);
+  }
+
+  emit('first-recorded');
 }
 
 defineExpose({ playAudio, stopAudio, isPlaying, audioUrl, audioDuration, isInCycle, startSyncedRecording, isWaitingForSync: () => isWaitingForSync.value });

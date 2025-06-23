@@ -31,6 +31,7 @@
 import { ref, computed } from 'vue';
 import LoopTrack from 'components/LoopTrack.vue';
 import MicLevelBar from 'components/MicLevelBar.vue';
+import { syncStore } from '../stores/sync-store';
 
 const loopRefs = ref<InstanceType<typeof LoopTrack>[]>([]);
 const latencyMs = ref<number|null>(null);
@@ -49,7 +50,9 @@ function getActiveLoopIds() {
 }
 
 function startLoopCycle() {
-  console.log('startLoopCycle');
+  // Обновляем время начала цикла в глобальном стейте
+  syncStore.updateCycleStart();
+  console.log('startLoopCycle - cycle start updated');
   // Сначала синхронизируем запись для ожидающих лупов
   loopRefs.value.forEach((comp) => {
     if (comp && typeof comp.startSyncedRecording === 'function' && typeof comp.isWaitingForSync === 'function' && comp.isWaitingForSync() === true) {
