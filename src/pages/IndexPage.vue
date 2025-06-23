@@ -50,6 +50,12 @@ function getActiveLoopIds() {
 
 function startLoopCycle() {
   console.log('startLoopCycle');
+  // Сначала синхронизируем запись для ожидающих лупов
+  loopRefs.value.forEach((comp) => {
+    if (comp && typeof comp.startSyncedRecording === 'function' && typeof comp.isWaitingForSync === 'function' && comp.isWaitingForSync() === true) {
+      comp.startSyncedRecording();
+    }
+  });
   const activeIds = getActiveLoopIds();
   if (activeIds.length === 0) return;
   playingLoops.value = new Set(activeIds);

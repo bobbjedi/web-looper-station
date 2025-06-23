@@ -43,6 +43,13 @@
             class="waiting-icon"
           />
           <q-icon
+            v-else-if="isWaitingForSync"
+            name="schedule"
+            color="yellow-7"
+            size="36px"
+            class="waiting-sync-icon"
+          />
+          <q-icon
             v-else-if="isPlaying || isInCycle"
             name="play_arrow"
             color="green"
@@ -108,6 +115,7 @@ let dataArray: Uint8Array = new Uint8Array(0);
 let waitSoundTimer: number | null = null;
 let autoStopTimer: number | null = null;
 let progressTimer: number | null = null;
+const isWaitingForSync = ref(false);
 
 // Громкость
 const volume = ref(1); // от 0 до 1
@@ -425,7 +433,11 @@ function handleCircleClick() {
       }, 150);
     }
 
-    toggleRecording();
+    if (props.loopId === 1) {
+      toggleRecording();
+    } else {
+      isWaitingForSync.value = true;
+    }
   } else if (audioUrl.value && !isRecording.value) {
     // Если есть запись и не записываем - управляем воспроизведением и mute
     if (isPlaying.value) {
@@ -441,7 +453,14 @@ function handleCircleClick() {
   }
 }
 
-defineExpose({ playAudio, stopAudio, isPlaying, audioUrl, audioDuration, isInCycle });
+function startSyncedRecording() {
+  if (isWaitingForSync.value) {
+    isWaitingForSync.value = false;
+    void startRecording();
+  }
+}
+
+defineExpose({ playAudio, stopAudio, isPlaying, audioUrl, audioDuration, isInCycle, startSyncedRecording, isWaitingForSync: () => isWaitingForSync.value });
 
 onUnmounted(() => {
   stopMicMonitor();
@@ -608,6 +627,11 @@ onUnmounted(() => {
 
 .recorded-icon {
   filter: drop-shadow(0 2px 4px rgba(25, 118, 210, 0.5));
+}
+
+.waiting-sync-icon {
+  animation: waiting-rotate 2s linear infinite;
+  filter: drop-shadow(0 2px 4px rgba(255, 215, 0, 0.5));
 }
 
 @keyframes shimmer-rotate {
