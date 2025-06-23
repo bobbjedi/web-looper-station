@@ -7,7 +7,7 @@
       </q-badge>
     </div>
     <div class="q-mt-md column items-stretch">
-      <q-btn :color="isRecording ? 'red' : 'primary'" icon="mic" @click="toggleRecording" :label="isRecording ? 'Стоп' : isWaitingForSound ? 'Жду звук...' : 'Запись'" class="btn-fixed q-mb-sm" :disable="isWaitingForSound && !isRecording" />
+      <q-btn :color="isRecording ? 'red' : 'primary'" icon="mic" @click="toggleRecording" :label="isRecording ? 'Стоп' : isWaitingForSound ? 'Жду звук...' : 'Запись'" class="btn-fixed q-mb-sm" :disable="props.canRecord === false || (isWaitingForSound && !isRecording)" />
       <q-btn :color="isPlaying ? 'green' : 'primary'" icon="play_arrow" @click="togglePlayback" :label="isPlaying ? 'Стоп' : 'Воспроизвести'" :disable="!audioUrl" class="btn-fixed q-mb-sm" />
       <q-btn :color="isMuted ? 'grey' : 'primary'" :icon="isMuted ? 'volume_off' : 'volume_up'" @click="toggleMute" :label="isMuted ? 'Заглушен' : 'Mute'" :disable="!audioUrl" class="btn-fixed q-mb-sm" />
       <q-btn color="negative" icon="delete" @click="resetLoop" label="Сброс" :disable="!audioUrl" class="btn-fixed" />
@@ -25,7 +25,7 @@
 <script setup lang="ts">
 import { ref, defineExpose, watch, defineEmits, onUnmounted } from 'vue';
 
-const props = defineProps<{ loopId: number }>();
+const props = defineProps<{ loopId: number, canRecord?: boolean }>();
 
 const emit = defineEmits(['ended']);
 

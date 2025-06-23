@@ -27,6 +27,7 @@
         :loopId="id"
         ref="loopRefs"
         @ended="onLoopEnded(id)"
+        :canRecord="id === 1 || !!loopRefs[0]?.audioUrl"
       />
     </div>
   </q-page>
