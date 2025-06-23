@@ -1,5 +1,6 @@
 <template>
   <q-page class="column items-center q-pa-md q-gutter-md">
+    <MicLevelBar />
     <q-btn
       color="primary"
       class="q-mb-md"
@@ -25,6 +26,7 @@
         :key="id"
         :loopId="id"
         ref="loopRefs"
+        @ended="onLoopEnded(id)"
       />
     </div>
   </q-page>
@@ -33,42 +35,71 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import LoopTrack from 'components/LoopTrack.vue';
+import MicLevelBar from 'components/MicLevelBar.vue';
 
 const loopRefs = ref<InstanceType<typeof LoopTrack>[]>([]);
 const isPlayingAll = ref(false);
 const latencyMs = ref<number|null>(null);
+const playingLoops = ref<Set<number>>(new Set());
+
+function getActiveLoopIds() {
+  return loopRefs.value
+    .map((comp, idx) => (comp && comp.audioUrl ? idx + 1 : null))
+    .filter((id): id is number => id !== null);
+}
+
+function startLoopCycle() {
+  console.log('startLoopCycle');
+  const activeIds = getActiveLoopIds();
+  if (activeIds.length === 0) return;
+  playingLoops.value = new Set(activeIds);
+  loopRefs.value.forEach((comp) => {
+    if (comp && comp.audioUrl) {
+      comp.playAudio();
+    }
+  });
+}
+
+function onLoopEnded(id: number) {
+  playingLoops.value.delete(id);
+  if (isPlayingAll.value && playingLoops.value.size === 0) {
+    // Все лупы закончили — запускаем следующий цикл
+    setTimeout(() => startLoopCycle(), 0);
+  }
+}
+
+function stopLoopCycle() {
+  console.log('stopLoopCycle');
+  playingLoops.value.clear();
+  loopRefs.value.forEach((comp) => {
+    if (comp && comp.isPlaying) {
+      comp.stopAudio();
+    }
+  });
+}
 
 function toggleAll() {
   if (!isPlayingAll.value) {
-    // Стартуем все лупы, у которых есть запись
-    loopRefs.value.forEach((comp) => {
-      if (comp && comp.audioUrl) {
-        comp.playAudio();
-      }
-    });
+    startLoopCycle();
     isPlayingAll.value = true;
   } else {
-    // Останавливаем все лупы
-    loopRefs.value.forEach((comp) => {
-      if (comp && comp.isPlaying) {
-        comp.stopAudio();
-      }
-    });
+    stopLoopCycle();
     isPlayingAll.value = false;
   }
 }
 
 async function latencyCheck() {
   latencyMs.value = null;
-  // 1. Создаём длинный чередующийся импульс
+  // 1. Создаём чистый тон 1000 Гц длительностью 300 мс
   const AudioCtx = window.AudioContext || (window as typeof window & { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
   const ctx = new AudioCtx();
-  const duration = 0.1; // 100 мс
+  const duration = 0.3; // 300 мс
+  const freq = 1000; // 1000 Гц
   const sampleRate = ctx.sampleRate;
   const buffer = ctx.createBuffer(1, sampleRate * duration, sampleRate);
   const data = buffer.getChannelData(0);
   for (let i = 0; i < data.length; i++) {
-    data[i] = i < 200 ? (i % 2 === 0 ? 1 : -1) : 0; // 200 сэмплов чередующегося сигнала
+    data[i] = Math.sin(2 * Math.PI * freq * (i / sampleRate));
   }
   // 2. Готовим MediaRecorder
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -77,8 +108,8 @@ async function latencyCheck() {
   mediaRecorder.ondataavailable = (e) => audioChunks.push(e.data);
   // 3. Запускаем запись
   mediaRecorder.start();
-  await new Promise((resolve) => setTimeout(resolve, 300)); // 300 мс буфер
-  // 4. Воспроизводим импульс
+  await new Promise((resolve) => setTimeout(resolve, 500)); // 500 мс буфер
+  // 4. Воспроизводим тон
   const source = ctx.createBufferSource();
   source.buffer = buffer;
   source.connect(ctx.destination);
@@ -97,7 +128,7 @@ async function latencyCheck() {
   const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
   const arrayBuffer = await audioBlob.arrayBuffer();
   const recordedBuffer = await ctx.decodeAudioData(arrayBuffer);
-  // 8. Находим первый пик (момент импульса)
+  // 8. Находим первый пик (момент сигнала)
   const recData = recordedBuffer.getChannelData(0);
   let peakIndex = -1;
   const threshold = 0.05;
@@ -113,7 +144,7 @@ async function latencyCheck() {
   }
   const peakTime = peakIndex / recordedBuffer.sampleRate;
   // 9. Вычисляем задержку
-  const latency = Math.round((peakTime + 0.3) * 1000); // +0.3s — учёт буфера
+  const latency = Math.round((peakTime + 0.5) * 1000); // +0.5s — учёт буфера
   latencyMs.value = latency;
 }
 </script>
