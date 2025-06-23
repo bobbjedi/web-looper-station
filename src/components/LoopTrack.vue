@@ -86,6 +86,146 @@
       />
     </div>
 
+    <!-- Кнопки редактирования -->
+    <div v-if="audioUrl && !isEditing" class="edit-controls q-mt-sm">
+      <q-btn
+        color="orange"
+        icon="edit"
+        @click="startEditing"
+        label="Редактировать"
+        class="edit-btn"
+        flat
+        rounded
+        size="sm"
+      />
+    </div>
+
+    <!-- Всплывающая форма редактирования -->
+    <q-dialog v-model="isEditing" persistent maximized>
+      <q-card class="edit-dialog">
+        <q-card-section class="edit-header">
+          <div class="text-h6">Редактирование лупа {{ loopId }}</div>
+          <q-btn
+            icon="close"
+            flat
+            round
+            dense
+            @click="stopEditing"
+            class="close-btn"
+          />
+        </q-card-section>
+
+        <q-card-section class="edit-content">
+          <!-- Информация о длительности -->
+          <div class="duration-info q-mb-md">
+            <div class="text-subtitle2">
+              Длина: {{ (editEndTime - editStartTime).toFixed(2) }} сек
+            </div>
+          </div>
+
+          <!-- Визуализация waveform -->
+          <div class="waveform-section q-mb-lg">
+            <div class="text-subtitle2 q-mb-sm">Визуализация звука</div>
+            <AudioWaveform
+              :audio-url="audioUrl"
+              :start-time="editStartTime"
+              :end-time="editEndTime"
+              :duration="audioDuration || 0"
+              :bpm="props.metronomeRef?.bpm() || 95"
+              :is-metronome-on="props.metronomeRef?.isMetronomeOn() || false"
+              @update:start-time="editStartTime = $event"
+              @update:end-time="editEndTime = $event"
+            />
+          </div>
+
+          <!-- Слайдеры управления -->
+          <div class="sliders-section q-mb-lg">
+            <div class="slider-group q-mb-md">
+              <div class="slider-label text-subtitle2 q-mb-xs">Начало обрезки</div>
+              <q-slider
+                v-model="editStartTime"
+                :min="0"
+                :max="audioDuration ?? 1"
+                :step="0.1"
+                color="blue"
+                class="edit-slider"
+                label
+                label-always
+              />
+            </div>
+
+            <div class="slider-group">
+              <div class="slider-label text-subtitle2 q-mb-xs">Конец обрезки</div>
+              <q-slider
+                v-model="editEndTime"
+                :min="0"
+                :max="audioDuration ?? 1"
+                :step="0.1"
+                color="red"
+                class="edit-slider"
+                label
+                label-always
+              />
+            </div>
+          </div>
+
+          <!-- Контролы предварительного прослушивания -->
+          <div class="preview-section q-mb-lg">
+            <div class="text-subtitle2 q-mb-sm">Предварительное прослушивание</div>
+            <div class="preview-controls row q-gutter-sm justify-center">
+              <q-btn
+                v-if="!isPreviewPlaying"
+                color="primary"
+                icon="play_arrow"
+                @click="playPreview"
+                label="Возобновить"
+                class="preview-btn"
+              />
+              <q-btn
+                v-if="isPreviewPlaying"
+                color="orange"
+                icon="stop"
+                @click="stopPreview"
+                label="Стоп"
+                class="preview-btn"
+              />
+              <q-btn
+                color="secondary"
+                icon="volume_up"
+                @click="togglePreviewMute"
+                :label="isPreviewMuted ? 'Включить звук' : 'Выключить звук'"
+                class="preview-btn"
+              />
+            </div>
+            <div class="text-caption text-center q-mt-sm text-grey-4">
+              Луп автоматически перезапускается при изменении обрезки
+            </div>
+          </div>
+        </q-card-section>
+
+        <q-card-actions class="edit-actions">
+          <q-btn
+            color="green"
+            icon="check"
+            @click="trimAudio"
+            label="Применить обрезку"
+            class="apply-btn"
+            size="lg"
+          />
+          <q-btn
+            color="grey"
+            icon="close"
+            @click="stopEditing"
+            label="Отмена"
+            class="cancel-btn"
+            size="lg"
+          />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <!-- Скрытый аудио для предварительного прослушивания -->
+    <audio v-if="previewAudioUrl" :src="previewAudioUrl" ref="previewAudioRef" style="display:none" />
     <audio v-if="audioUrl" :src="audioUrl" ref="audioRef" style="display:none" />
   </div>
 </template>
@@ -93,6 +233,7 @@
 <script setup lang="ts">
 import { ref, defineExpose, watch, defineEmits, onUnmounted, computed } from 'vue';
 import CircularProgress from './CircularProgress.vue';
+import AudioWaveform from './AudioWaveform.vue';
 import { syncStore } from '../stores/sync-store';
 import { settingsStore } from '../stores/settings-store';
 
@@ -101,7 +242,8 @@ const props = defineProps<{
   canRecord?: boolean,
   masterDuration?: number,
   masterDurationSec?: number,
-  cycleStartTime?: number
+  cycleStartTime?: number,
+  metronomeRef?: { startMetronome: () => void; stopMetronome: () => void; isMetronomeOn: () => boolean; bpm: () => number } | null
 }>();
 
 const emit = defineEmits(['ended', 'first-recorded']);
@@ -125,6 +267,19 @@ let waitSoundTimer: number | null = null;
 let autoStopTimer: number | null = null;
 let progressTimer: number | null = null;
 const isWaitingForSync = ref(false);
+
+// Состояние редактирования
+const isEditing = ref(false);
+const editStartTime = ref(0);
+const editEndTime = ref(0);
+const originalAudioUrl = ref<string | null>(null);
+
+// Состояние предварительного прослушивания
+const isPreviewPlaying = ref(false);
+const isPreviewMuted = ref(false);
+const hasStartedPreview = ref(false);
+const previewAudioUrl = ref<string | null>(null);
+const previewAudioRef = ref<HTMLAudioElement | null>(null);
 
 // Громкость
 const volume = ref(1); // от 0 до 1
@@ -225,16 +380,46 @@ const circleBgColor = computed(() => {
   return 'rgba(33, 150, 243, 0.2)'; // полупрозрачный синий фон по умолчанию
 });
 
-function toggleRecording() {
-  if (!isRecording.value) {
+function handleCircleClick() {
+  // Если записываем - останавливаем запись
+  if (isRecording.value) {
+    stopRecording();
+    return;
+  }
+
+  // Если можно начать запись - запускаем
+  if (canStartRecording.value) {
+    // Добавляем тактильную обратную связь
+    if (navigator.vibrate) {
+      navigator.vibrate(50); // короткая вибрация 50мс
+    }
+
+    // Добавляем визуальную обратную связь
+    const circle = document.querySelector('.clickable') as HTMLElement;
+    if (circle) {
+      circle.style.transform = 'scale(0.95)';
+      setTimeout(() => {
+        circle.style.transform = '';
+      }, 150);
+    }
+
     if (props.loopId === 1) {
       waitForSoundStart();
     } else {
-      console.log('Setting isWaitingForSync = true for loopId:', props.loopId);
       isWaitingForSync.value = true;
     }
-  } else {
-    stopRecording();
+  } else if (audioUrl.value && !isRecording.value) {
+    // Если есть запись и не записываем - управляем воспроизведением и mute
+    if (isPlaying.value) {
+      // Если воспроизводится - переключаем mute
+      isMuted.value = !isMuted.value;
+      if (audioRef.value) {
+        audioRef.value.volume = isMuted.value ? 0 : volume.value;
+      }
+    } else {
+      // Если не воспроизводится - запускаем воспроизведение
+      playAudio();
+    }
   }
 }
 
@@ -432,64 +617,202 @@ function resetLoop() {
   isPlaying.value = false;
   isInCycle.value = false;
   stopProgressTimer();
+  // Сброс состояния редактирования
+  isEditing.value = false;
+  originalAudioUrl.value = null;
 }
 
-// Если mute меняется во время воспроизведения
-watch(isMuted, (val) => {
-  if (audioRef.value && typeof audioRef.value.volume === 'number') {
-    audioRef.value.volume = val ? 0 : volume.value;
+// Функции редактирования
+function startEditing() {
+  if (!audioUrl.value || !audioDuration.value) return;
+
+  editStartTime.value = 0;
+  editEndTime.value = audioDuration.value ?? 0;
+  isEditing.value = true;
+  originalAudioUrl.value = audioUrl.value;
+
+  // Создаем предварительное аудио и автоматически запускаем прослушивание
+  void createPreviewAudio().then(() => {
+    // Автоматически запускаем прослушивание при открытии редактирования
+    setTimeout(() => {
+      playPreview();
+    }, 100);
+  });
+
+  console.log('Started editing loop', props.loopId, 'duration:', audioDuration.value);
+}
+
+function stopEditing() {
+  isEditing.value = false;
+  isPreviewPlaying.value = false;
+  hasStartedPreview.value = false;
+
+  // Очищаем таймер обновления
+  if (previewUpdateTimer) {
+    clearTimeout(previewUpdateTimer);
+    previewUpdateTimer = null;
   }
-});
 
-watch(volume, (val) => {
-  if (audioRef.value && !isMuted.value && typeof audioRef.value.volume === 'number') {
-    audioRef.value.volume = val;
-  }
-});
-
-function handleCircleClick() {
-  // Если записываем - останавливаем запись
-  if (isRecording.value) {
-    stopRecording();
-    return;
+  // Очищаем предварительное аудио
+  if (previewAudioUrl.value) {
+    URL.revokeObjectURL(previewAudioUrl.value);
+    previewAudioUrl.value = null;
   }
 
-  // Если можно начать запись - запускаем
-  if (canStartRecording.value) {
-    // Добавляем тактильную обратную связь
-    if (navigator.vibrate) {
-      navigator.vibrate(50); // короткая вибрация 50мс
-    }
+  // Восстанавливаем основное воспроизведение если нужно
+  if (audioRef.value && isPlaying.value) {
+    void audioRef.value.play();
+  }
+}
 
-    // Добавляем визуальную обратную связь
-    const circle = document.querySelector('.clickable') as HTMLElement;
-    if (circle) {
-      circle.style.transform = 'scale(0.95)';
-      setTimeout(() => {
-        circle.style.transform = '';
-      }, 150);
-    }
+async function trimAudio() {
+  if (!originalAudioUrl.value || !audioDuration.value) return;
 
-    if (props.loopId === 1) {
-      toggleRecording();
-    } else {
-      console.log('Setting isWaitingForSync = true for loopId:', props.loopId);
-      isWaitingForSync.value = true;
-    }
-  } else if (audioUrl.value && !isRecording.value) {
-    // Если есть запись и не записываем - управляем воспроизведением и mute
-    if (isPlaying.value) {
-      // Если воспроизводится - переключаем mute
-      isMuted.value = !isMuted.value;
-      if (audioRef.value) {
-        audioRef.value.volume = isMuted.value ? 0 : volume.value;
+  try {
+    console.log('Trimming audio for loop', props.loopId, 'from', editStartTime.value, 'to', editEndTime.value);
+
+    // Создаём AudioContext для обработки
+    const AudioCtx = window.AudioContext || (window as typeof window & { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const audioCtx = new AudioCtx();
+
+    // Загружаем оригинальное аудио
+    const response = await fetch(originalAudioUrl.value);
+    const arrayBuffer = await response.arrayBuffer();
+    const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+
+    // Вычисляем параметры обрезки
+    const startSample = Math.floor(editStartTime.value * audioCtx.sampleRate);
+    const endSample = Math.floor(editEndTime.value * audioCtx.sampleRate);
+    const newLength = endSample - startSample;
+
+    // Создаём новый буфер с обрезанным аудио
+    const newBuffer = audioCtx.createBuffer(
+      audioBuffer.numberOfChannels,
+      newLength,
+      audioCtx.sampleRate
+    );
+
+    // Копируем данные из оригинального буфера
+    for (let channel = 0; channel < audioBuffer.numberOfChannels; channel++) {
+      const originalData = audioBuffer.getChannelData(channel);
+      const newData = newBuffer.getChannelData(channel);
+
+      for (let i = 0; i < newLength; i++) {
+        const sample = originalData[startSample + i];
+        newData[i] = sample ?? 0;
       }
-    } else {
-      // Если не воспроизводится - запускаем воспроизведение
-      playAudio();
     }
+
+    // Конвертируем обратно в Blob
+    const offlineCtx = new OfflineAudioContext(
+      newBuffer.numberOfChannels,
+      newBuffer.length,
+      newBuffer.sampleRate
+    );
+
+    const source = offlineCtx.createBufferSource();
+    source.buffer = newBuffer;
+    source.connect(offlineCtx.destination);
+    source.start();
+
+    const renderedBuffer = await offlineCtx.startRendering();
+
+    // Конвертируем в WAV
+    const wavBlob = audioBufferToWav(renderedBuffer);
+
+    // Обновляем URL и длительность
+    if (audioUrl.value) {
+      URL.revokeObjectURL(audioUrl.value);
+    }
+    audioUrl.value = URL.createObjectURL(wavBlob);
+    audioDuration.value = (editEndTime.value ?? 0) - (editStartTime.value ?? 0);
+
+    // Очистка
+    void audioCtx.close();
+
+    console.log('Audio trimmed successfully, new duration:', audioDuration.value);
+    stopEditing();
+
+  } catch (error) {
+    console.error('Error trimming audio:', error);
+    stopEditing();
   }
 }
+
+// Функция конвертации AudioBuffer в WAV
+function audioBufferToWav(buffer: AudioBuffer): Blob {
+  const length = buffer.length;
+  const numberOfChannels = buffer.numberOfChannels;
+  const sampleRate = buffer.sampleRate;
+  const arrayBuffer = new ArrayBuffer(44 + length * numberOfChannels * 2);
+  const view = new DataView(arrayBuffer);
+
+  // WAV header
+  const writeString = (offset: number, string: string) => {
+    for (let i = 0; i < string.length; i++) {
+      view.setUint8(offset + i, string.charCodeAt(i));
+    }
+  };
+
+  writeString(0, 'RIFF');
+  view.setUint32(4, 36 + length * numberOfChannels * 2, true);
+  writeString(8, 'WAVE');
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, numberOfChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * numberOfChannels * 2, true);
+  view.setUint16(32, numberOfChannels * 2, true);
+  view.setUint16(34, 16, true);
+  writeString(36, 'data');
+  view.setUint32(40, length * numberOfChannels * 2, true);
+
+  // Audio data
+  let offset = 44;
+  for (let i = 0; i < length; i++) {
+    for (let channel = 0; channel < numberOfChannels; channel++) {
+      const sample = buffer.getChannelData(channel)[i];
+      const normalizedSample = Math.max(-1, Math.min(1, sample ?? 0));
+      view.setInt16(offset, normalizedSample < 0 ? normalizedSample * 0x8000 : normalizedSample * 0x7FFF, true);
+      offset += 2;
+    }
+  }
+
+  return new Blob([arrayBuffer], { type: 'audio/wav' });
+}
+
+// Watchers для валидации слайдеров
+watch(editStartTime, (newStart) => {
+  if (newStart >= editEndTime.value) {
+    editStartTime.value = Math.max(0, editEndTime.value - 0.1);
+  }
+});
+
+watch(editEndTime, (newEnd) => {
+  if (newEnd <= editStartTime.value) {
+    editEndTime.value = Math.min(audioDuration.value ?? 1, editStartTime.value + 0.1);
+  }
+});
+
+// Таймер для debounce обновления предварительного аудио
+let previewUpdateTimer: number | null = null;
+
+watch([editStartTime, editEndTime], () => {
+  if (previewUpdateTimer) {
+    clearTimeout(previewUpdateTimer);
+  }
+  previewUpdateTimer = window.setTimeout(() => {
+    void createPreviewAudio().then(() => {
+      if (isPreviewPlaying.value) {
+        stopPreview();
+        setTimeout(() => {
+          playPreview();
+        }, 100);
+      }
+    });
+  }, 300);
+});
 
 function startSyncedRecording() {
   console.log('startSyncedRecording called for loopId:', props.loopId, 'isWaitingForSync:', isWaitingForSync.value);
@@ -515,7 +838,138 @@ function onRecordingComplete() {
   emit('first-recorded');
 }
 
-defineExpose({ playAudio, stopAudio, isPlaying, audioUrl, audioDuration, isInCycle, startSyncedRecording, isWaitingForSync: () => isWaitingForSync.value });
+// Функции предварительного прослушивания
+async function createPreviewAudio() {
+  if (!originalAudioUrl.value || !audioDuration.value) return;
+
+  try {
+    const AudioCtx = window.AudioContext || (window as typeof window & { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const audioCtx = new AudioCtx();
+
+    // Загружаем оригинальное аудио
+    const response = await fetch(originalAudioUrl.value);
+    const arrayBuffer = await response.arrayBuffer();
+    const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+
+    // Валидируем границы обрезки
+    const startTime = Math.max(0, Math.min(editStartTime.value, audioDuration.value));
+    const endTime = Math.max(startTime + 0.1, Math.min(editEndTime.value, audioDuration.value));
+
+    console.log('Creating preview audio:', { startTime, endTime, duration: audioDuration.value });
+
+    // Создаем обрезанное аудио
+    const startSample = Math.floor(startTime * audioBuffer.sampleRate);
+    const endSample = Math.floor(endTime * audioBuffer.sampleRate);
+    const newLength = endSample - startSample;
+
+    if (newLength <= 0) {
+      console.error('Invalid trim range:', { startSample, endSample, newLength });
+      return;
+    }
+
+    const newBuffer = audioCtx.createBuffer(
+      audioBuffer.numberOfChannels,
+      newLength,
+      audioBuffer.sampleRate
+    );
+
+    // Копируем данные
+    for (let channel = 0; channel < audioBuffer.numberOfChannels; channel++) {
+      const originalData = audioBuffer.getChannelData(channel);
+      const newData = newBuffer.getChannelData(channel);
+
+      for (let i = 0; i < newLength; i++) {
+        const sampleIndex = startSample + i;
+        if (sampleIndex < originalData.length) {
+          const sample = originalData[sampleIndex];
+          newData[i] = sample ?? 0;
+        } else {
+          newData[i] = 0;
+        }
+      }
+    }
+
+    // Конвертируем в Blob
+    const offlineCtx = new OfflineAudioContext(
+      newBuffer.numberOfChannels,
+      newBuffer.length,
+      newBuffer.sampleRate
+    );
+
+    const source = offlineCtx.createBufferSource();
+    source.buffer = newBuffer;
+    source.connect(offlineCtx.destination);
+    source.start();
+
+    const renderedBuffer = await offlineCtx.startRendering();
+    const wavBlob = audioBufferToWav(renderedBuffer);
+
+    // Создаем URL для предварительного прослушивания
+    if (previewAudioUrl.value) {
+      URL.revokeObjectURL(previewAudioUrl.value);
+    }
+    previewAudioUrl.value = URL.createObjectURL(wavBlob);
+
+    console.log('Preview audio created successfully, length:', newLength / audioBuffer.sampleRate);
+
+    void audioCtx.close();
+
+  } catch (error) {
+    console.error('Error creating preview audio:', error);
+  }
+}
+
+function playPreview() {
+  if (!previewAudioRef.value || !previewAudioUrl.value) return;
+
+  // Останавливаем основное воспроизведение
+  if (isPlaying.value) {
+    stopAudio();
+  }
+
+  // Синхронизируем метроном с предварительным прослушиванием
+  if (props.metronomeRef && props.metronomeRef.isMetronomeOn()) {
+    // Останавливаем метроном и перезапускаем его синхронно с аудио
+    props.metronomeRef.stopMetronome();
+    setTimeout(() => {
+      props.metronomeRef?.startMetronome();
+    }, 50); // Небольшая задержка для синхронизации
+  }
+
+  // Запускаем предварительное прослушивание
+  previewAudioRef.value.currentTime = 0;
+  previewAudioRef.value.volume = isPreviewMuted.value ? 0 : volume.value;
+  previewAudioRef.value.loop = true; // Включаем зацикливание
+  void previewAudioRef.value.play();
+  isPreviewPlaying.value = true;
+  hasStartedPreview.value = true; // Отмечаем, что пользователь запускал прослушивание
+
+  // Убираем обработчик окончания, так как теперь луп зацикливается
+  previewAudioRef.value.onended = null;
+}
+
+function stopPreview() {
+  if (!previewAudioRef.value) return;
+
+  previewAudioRef.value.pause();
+  previewAudioRef.value.currentTime = 0;
+  previewAudioRef.value.loop = false; // Отключаем зацикливание
+  isPreviewPlaying.value = false;
+
+  // Останавливаем метроном при остановке прослушивания
+  if (props.metronomeRef && props.metronomeRef.isMetronomeOn()) {
+    props.metronomeRef.stopMetronome();
+  }
+}
+
+function togglePreviewMute() {
+  isPreviewMuted.value = !isPreviewMuted.value;
+  if (previewAudioRef.value) {
+    previewAudioRef.value.volume = isPreviewMuted.value ? 0 : volume.value;
+  }
+}
+
+defineExpose({ playAudio, stopAudio, isPlaying, audioUrl, audioDuration, isInCycle, startSyncedRecording, isWaitingForSync: () => isWaitingForSync.value, handleCircleClick });
 
 onUnmounted(() => {
   stopMicMonitor();
@@ -777,6 +1231,174 @@ onUnmounted(() => {
     font-size: 0.95rem;
     top: -22px;
     padding: 2px 10px 2px 8px;
+  }
+}
+
+/* Стили для редактирования */
+.edit-controls {
+  display: flex;
+  justify-content: center;
+}
+
+.edit-interface {
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.edit-info {
+  color: rgba(255, 255, 255, 0.8);
+  font-weight: 500;
+}
+
+.waveform-container {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.edit-sliders {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.edit-slider {
+  width: 100%;
+}
+
+.edit-actions {
+  margin-top: 8px;
+}
+
+.apply-btn, .cancel-btn, .edit-btn {
+  min-width: 80px;
+}
+
+/* Адаптивность */
+@media (max-width: 600px) {
+  .edit-interface {
+    padding: 8px;
+  }
+
+  .waveform-container {
+    padding: 4px;
+  }
+
+  .apply-btn, .cancel-btn {
+    min-width: 60px;
+    font-size: 12px;
+  }
+}
+
+.edit-dialog {
+  background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+  color: white;
+}
+
+.edit-header {
+  background: linear-gradient(135deg, #2196f3 0%, #1976d2 100%);
+  color: white;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 24px;
+}
+
+.close-btn {
+  color: white;
+}
+
+.edit-content {
+  padding: 24px;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.duration-info {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 12px;
+  border-radius: 8px;
+  text-align: center;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.waveform-section {
+  background: rgba(0, 0, 0, 0.3);
+  padding: 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.sliders-section {
+  background: rgba(255, 255, 255, 0.05);
+  padding: 20px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.slider-group {
+  margin-bottom: 16px;
+}
+
+.slider-label {
+  color: rgba(255, 255, 255, 0.9);
+  font-weight: 500;
+}
+
+.edit-slider {
+  margin-top: 8px;
+}
+
+.preview-section {
+  background: rgba(255, 255, 255, 0.05);
+  padding: 20px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.preview-controls {
+  justify-content: center;
+}
+
+.preview-btn {
+  min-width: 120px;
+  font-weight: 500;
+}
+
+.edit-actions {
+  background: rgba(0, 0, 0, 0.2);
+  padding: 16px 24px;
+  justify-content: center;
+  gap: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.apply-btn, .cancel-btn {
+  min-width: 160px;
+  font-weight: 600;
+  border-radius: 8px;
+}
+
+/* Адаптивность */
+@media (max-width: 768px) {
+  .edit-content {
+    padding: 16px;
+  }
+
+  .edit-header {
+    padding: 12px 16px;
+  }
+
+  .preview-btn {
+    min-width: 100px;
+    font-size: 12px;
+  }
+
+  .apply-btn, .cancel-btn {
+    min-width: 120px;
+    font-size: 14px;
   }
 }
 </style>

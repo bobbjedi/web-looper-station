@@ -177,6 +177,14 @@ watch(bpm, () => {
 onUnmounted(() => {
   stopMetronome();
 });
+
+// Экспортируем функции для синхронизации
+defineExpose({
+  startMetronome,
+  stopMetronome,
+  isMetronomeOn: () => isMetronomeOn.value,
+  bpm: () => bpm.value
+});
 </script>
 
 <style scoped>

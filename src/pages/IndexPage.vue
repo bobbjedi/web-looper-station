@@ -1,13 +1,14 @@
 <template>
   <q-page class="column items-center q-pa-md q-gutter-md">
     <MicLevelBar />
-    <MetronomeComponent />
+    <MetronomeComponent ref="metronomeRef" />
     <div class="looper-grid q-mb-md">
       <LoopTrack
         v-for="id in 4"
         :key="id"
         :loopId="id"
         ref="loopRefs"
+        :metronomeRef="metronomeRef"
         @ended="onLoopEnded(id)"
         @first-recorded="onFirstRecorded"
         :canRecord="id === 1 || (masterDuration > 0)"
@@ -36,6 +37,7 @@ import MetronomeComponent from 'components/Metronome.vue';
 import { syncStore } from '../stores/sync-store';
 
 const loopRefs = ref<InstanceType<typeof LoopTrack>[]>([]);
+const metronomeRef = ref<InstanceType<typeof MetronomeComponent> | null>(null);
 const latencyMs = ref<number|null>(null);
 const playingLoops = ref<Set<number>>(new Set());
 
