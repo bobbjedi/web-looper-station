@@ -473,16 +473,30 @@ async function startRecording() {
     syncStore.startSync(5); // временная длительность
   }
 
-  // Проверка masterDuration для не первого лупа
+  // Для последующих лупов проверяем синхронизацию
   if (props.loopId !== 1) {
-    const md = Number(props.masterDuration);
-    if (!md || !isFinite(md) || md <= 0) {
-      console.warn('Некорректный masterDuration для loopId', props.loopId, ':', props.masterDuration);
+    if (!syncStore.isSyncActive.value) {
+      console.warn('Синхронизация не активна для лупа', props.loopId);
       return;
     }
+
+    // Проверяем, близко ли мы к удару для точной синхронизации
+    const timeToBeat = syncStore.getTimeToNextBeat();
+    if (timeToBeat > 0.1 && timeToBeat < 0.9) {
+      // Если мы не близко к удару, ждем до следующего удара
+      console.log('Ожидание до следующего удара для точной синхронизации');
+      setTimeout(() => {
+        if (isWaitingForSync.value) {
+          void startRecording();
+        }
+      }, timeToBeat * 1000);
+      return;
+    }
+
     // Запускаем прогресс для записи >1 лупа
     startProgressTimer();
   }
+
   console.log('startRecording', props.loopId, 'masterDuration:', props.masterDuration);
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   mediaRecorder = new MediaRecorder(stream);
@@ -529,6 +543,7 @@ async function startRecording() {
   };
   mediaRecorder.start();
   isRecording.value = true;
+
   // Если это не первый луп и задана masterDuration — автостоп по таймеру
   if (props.loopId !== 1 && props.masterDuration && props.masterDuration > 0) {
     autoStopTimer = null;
@@ -572,6 +587,22 @@ function stopProgressTimer() {
 
 function playAudio() {
   if (audioRef.value) {
+    // Синхронизируем воспроизведение с метрономом
+    if (syncStore.isSyncActive.value && syncStore.isMetronomeOn.value) {
+      const timeToBeat = syncStore.getTimeToNextBeat();
+      const beatInterval = 60 / syncStore.bpm.value;
+
+      // Если мы не близко к удару, ждем до следующего удара
+      if (timeToBeat > 0.05 && timeToBeat < beatInterval - 0.05) {
+        setTimeout(() => {
+          if (isInCycle.value) {
+            playAudio();
+          }
+        }, timeToBeat * 1000);
+        return;
+      }
+    }
+
     audioRef.value.currentTime = 0;
     void audioRef.value.play();
     isPlaying.value = true;
@@ -829,10 +860,16 @@ function onRecordingComplete() {
     mediaRecorder = null;
   }
 
-  // Для первого лупа обновляем длительность синхронизации
+  // Для первого лупа обновляем длительность синхронизации и автоматически включаем метроном
   if (props.loopId === 1 && audioDuration.value) {
     syncStore.startSync(audioDuration.value);
-    console.log('Updated sync duration to:', audioDuration.value);
+
+    // Автоматически включаем метроном после записи первого лупа
+    if (!syncStore.isMetronomeOn.value) {
+      syncStore.toggleMetronome();
+    }
+
+    console.log('Updated sync duration to:', audioDuration.value, 'BPM:', syncStore.bpm.value);
   }
 
   emit('first-recorded');
@@ -927,13 +964,13 @@ function playPreview() {
     stopAudio();
   }
 
-  // Синхронизируем метроном с предварительным прослушиванием
-  if (props.metronomeRef && props.metronomeRef.isMetronomeOn()) {
-    // Останавливаем метроном и перезапускаем его синхронно с аудио
-    props.metronomeRef.stopMetronome();
+  // Синхронизируем с новой системой метронома
+  if (syncStore.isSyncActive.value && syncStore.isMetronomeOn.value) {
+    // Перезапускаем метроном для синхронизации с предварительным прослушиванием
+    syncStore.toggleMetronome();
     setTimeout(() => {
-      props.metronomeRef?.startMetronome();
-    }, 50); // Небольшая задержка для синхронизации
+      syncStore.toggleMetronome();
+    }, 50);
   }
 
   // Запускаем предварительное прослушивание
@@ -956,9 +993,9 @@ function stopPreview() {
   previewAudioRef.value.loop = false; // Отключаем зацикливание
   isPreviewPlaying.value = false;
 
-  // Останавливаем метроном при остановке прослушивания
-  if (props.metronomeRef && props.metronomeRef.isMetronomeOn()) {
-    props.metronomeRef.stopMetronome();
+  // Останавливаем метроном при остановке прослушивания только если он был включен для предварительного прослушивания
+  if (syncStore.isMetronomeOn.value && !syncStore.isSyncActive.value) {
+    syncStore.toggleMetronome();
   }
 }
 

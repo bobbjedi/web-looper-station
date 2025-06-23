@@ -5,9 +5,9 @@
       <q-btn
         flat
         round
-        :icon="isMetronomeOn ? 'music_note' : 'music_off'"
-        :color="isMetronomeOn ? 'primary' : 'grey'"
-        @click="toggleMetronome"
+        :icon="syncStore.isMetronomeOn ? 'music_note' : 'music_off'"
+        :color="syncStore.isMetronomeOn ? 'primary' : 'grey'"
+        @click="syncStore.toggleMetronome()"
         class="metronome-toggle"
       />
 
@@ -15,7 +15,7 @@
       <div class="bpm-controls row items-center q-gutter-xs">
         <q-btn flat round icon="remove" @click="decreaseBpm" size="sm" />
         <q-input
-          v-model.number="bpm"
+          v-model.number="localBpm"
           type="number"
           min="40"
           max="240"
@@ -24,6 +24,9 @@
           outlined
           label="BPM"
           class="bpm-input"
+          @update:model-value="(val: string | number | null) => {
+            if (typeof val === 'number') syncStore.setBpm(val);
+          }"
         />
         <q-btn flat round icon="add" @click="increaseBpm" size="sm" />
       </div>
@@ -32,7 +35,8 @@
       <div class="volume-controls row items-center q-gutter-xs">
         <q-icon name="volume_up" size="16px" color="amber" />
         <q-slider
-          v-model="metronomeVolume"
+          :model-value="syncStore.metronomeVolume.value"
+          @update:model-value="(val: number | null) => val !== null && syncStore.setMetronomeVolume(val)"
           :min="0"
           :max="1"
           :step="0.01"
@@ -61,130 +65,112 @@
       </div>
 
       <!-- Индикатор удара -->
-      <div v-if="isMetronomeOn" class="metronome-indicator" :class="{ active: metronomeActive }">
+      <div v-if="syncStore.isMetronomeOn" class="metronome-indicator" :class="{ active: metronomeActive }">
         <div class="metronome-pulse" :class="{ active: metronomeActive }"></div>
+      </div>
+
+      <!-- Индикатор синхронизации -->
+      <div v-if="syncStore.isSyncActive" class="sync-indicator">
+        <q-icon name="sync" size="16px" color="green" />
+        <span class="sync-text text-caption">{{ syncStore.totalBeats }} ударов</span>
+      </div>
+    </div>
+
+    <!-- Дополнительная информация о синхронизации -->
+    <div v-if="syncStore.isSyncActive" class="sync-info q-mt-sm">
+      <div class="row items-center justify-center q-gutter-md">
+        <div class="text-caption">
+          Цикл: {{ cycleDurationFormatted }}с
+        </div>
+        <div class="text-caption">
+          Удар: {{ currentBeatFormatted }}/{{ syncStore.totalBeats }}
+        </div>
+        <div class="text-caption">
+          До удара: {{ timeToNextBeatFormatted }}мс
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onUnmounted } from 'vue';
+import { ref, watch, onUnmounted, computed } from 'vue';
 import { settingsStore } from '../stores/settings-store';
+import { syncStore } from '../stores/sync-store';
 
 // Определяем имя компонента для соответствия ESLint
 defineOptions({
   name: 'MetronomeComponent'
 });
 
-// Состояние метронома
-const bpm = ref(95);
-const isMetronomeOn = ref(false);
+// Локальное состояние для BPM (для двусторонней привязки)
+const localBpm = ref(syncStore.bpm.value);
 const metronomeActive = ref(false);
-const metronomeVolume = ref(0.7);
 
-// Таймеры
-let metronomeTimer: number | null = null;
-let metronomeBeat = 0;
-const beatsPerBar = 4; // можно сделать настраиваемым
+// Таймер для анимации индикатора
+let indicatorTimer: number | null = null;
 
 // Функции управления BPM
 function increaseBpm() {
-  bpm.value = Math.min(240, bpm.value + 1);
+  const newBpm = Math.min(240, localBpm.value + 1);
+  localBpm.value = newBpm;
+  syncStore.setBpm(newBpm);
 }
 
 function decreaseBpm() {
-  bpm.value = Math.max(40, bpm.value - 1);
+  const newBpm = Math.max(40, localBpm.value - 1);
+  localBpm.value = newBpm;
+  syncStore.setBpm(newBpm);
 }
 
-// Функция воспроизведения клика метронома
-function playMetronomeClick(accent = false) {
-  const ctx = new ((window.AudioContext || (window as typeof window & { webkitAudioContext: typeof AudioContext }).webkitAudioContext))();
-  const bufferSize = 2048;
-  const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-  const data = buffer.getChannelData(0);
+// Функция анимации индикатора удара
+function animateBeatIndicator() {
+  if (!syncStore.isMetronomeOn.value || !syncStore.isSyncActive.value) return;
 
-  // Более яркий clicky звук: короче decay, выше громкость, более резкий
-  for (let i = 0; i < bufferSize; i++) {
-    const env = Math.exp(-i / (accent ? 12 : 20)); // короче decay для более резкого звука
-    data[i] = (Math.random() * 2 - 1) * env * 1.5; // увеличиваем амплитуду
+  metronomeActive.value = true;
+
+  if (indicatorTimer) {
+    clearTimeout(indicatorTimer);
   }
 
-  const source = ctx.createBufferSource();
-  source.buffer = buffer;
-  const filter = ctx.createBiquadFilter();
-  filter.type = 'highpass';
-  filter.frequency.value = accent ? 3200 : 2200; // выше частота для более звонкого звука
-  const gain = ctx.createGain();
-  gain.gain.value = accent ? metronomeVolume.value * 1.3 : metronomeVolume.value * 1.2; // увеличиваем громкость
-
-  source.connect(filter);
-  filter.connect(gain);
-  gain.connect(ctx.destination);
-  source.start();
-
-  setTimeout(() => {
-    source.stop();
-    void ctx.close();
-  }, accent ? 25 : 30); // короче длительность
+  indicatorTimer = window.setTimeout(() => {
+    metronomeActive.value = false;
+  }, 80);
 }
 
-// Запуск метронома
-function startMetronome() {
-  stopMetronome();
-  const interval = 60000 / bpm.value;
-  metronomeBeat = 0;
-
-  function tick() {
-    if (!isMetronomeOn.value) return;
-
-    metronomeActive.value = true;
-    playMetronomeClick(metronomeBeat === 0); // акцент на первый удар
-    setTimeout(() => metronomeActive.value = false, 80);
-
-    metronomeBeat = (metronomeBeat + 1) % beatsPerBar;
-    metronomeTimer = window.setTimeout(tick, interval);
-  }
-
-  tick();
-}
-
-// Остановка метронома
-function stopMetronome() {
-  if (metronomeTimer) {
-    clearTimeout(metronomeTimer);
-    metronomeTimer = null;
-  }
-  metronomeActive.value = false;
-}
-
-// Переключение метронома
-function toggleMetronome() {
-  isMetronomeOn.value = !isMetronomeOn.value;
-}
-
-// Watchers
-watch(isMetronomeOn, (on) => {
-  if (on) startMetronome();
-  else stopMetronome();
+// Watchers для синхронизации
+watch(() => syncStore.bpm.value, (newBpm) => {
+  localBpm.value = newBpm;
 });
 
-watch(bpm, () => {
-  if (isMetronomeOn.value) startMetronome();
+watch(() => syncStore.currentBeat, () => {
+  // Анимируем индикатор при каждом ударе
+  animateBeatIndicator();
 });
 
 // Очистка при размонтировании
 onUnmounted(() => {
-  stopMetronome();
+  if (indicatorTimer) {
+    clearTimeout(indicatorTimer);
+  }
 });
 
-// Экспортируем функции для синхронизации
+// Экспортируем функции для обратной совместимости
 defineExpose({
-  startMetronome,
-  stopMetronome,
-  isMetronomeOn: () => isMetronomeOn.value,
-  bpm: () => bpm.value
+  startMetronome: () => syncStore.toggleMetronome(),
+  stopMetronome: () => {
+    if (syncStore.isMetronomeOn.value) {
+      syncStore.toggleMetronome();
+    }
+  },
+  isMetronomeOn: () => syncStore.isMetronomeOn.value,
+  bpm: () => syncStore.bpm.value
 });
+
+// Вычисляемые свойства
+const cycleDurationFormatted = computed(() => syncStore.cycleDuration.value.toFixed(1));
+const currentBeatFormatted = computed(() => syncStore.currentBeat.value + 1);
+const timeToNextBeatFormatted = computed(() => (syncStore.timeToNextBeat.value * 1000).toFixed(0));
 </script>
 
 <style scoped>
@@ -290,6 +276,32 @@ defineExpose({
   opacity: 1;
   transform: scale(1.35);
   background: #fffde4;
+}
+
+.sync-indicator {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(76, 175, 80, 0.1);
+  border-radius: 8px;
+  padding: 4px 8px;
+}
+
+.sync-text {
+  color: rgba(76, 175, 80, 0.9);
+  font-weight: 500;
+}
+
+.sync-info {
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.sync-info .text-caption {
+  color: rgba(255, 255, 255, 0.7);
+  font-weight: 500;
 }
 
 /* Адаптивность */

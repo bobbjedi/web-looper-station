@@ -26,6 +26,22 @@
     <div v-if="latencyMs !== null" class="q-mb-lg text-h6">
       Задержка: {{ latencyMs }} мс
     </div>
+
+    <!-- Информация о синхронизации -->
+    <div v-if="syncStore.isSyncActive" class="sync-status q-mt-md">
+      <div class="text-subtitle2 text-center q-mb-sm">Статус синхронизации</div>
+      <div class="row items-center justify-center q-gutter-md">
+        <div class="text-caption">
+          BPM: {{ syncStore.bpm }}
+        </div>
+        <div class="text-caption">
+          Цикл: {{ cycleDurationFormatted }}с
+        </div>
+        <div class="text-caption">
+          Ударов: {{ syncStore.totalBeats }}
+        </div>
+      </div>
+    </div>
   </q-page>
 </template>
 
@@ -57,15 +73,19 @@ function startLoopCycle() {
   // Обновляем время начала цикла в глобальном стейте
   syncStore.updateCycleStart();
   console.log('startLoopCycle - cycle start updated');
+
   // Сначала синхронизируем запись для ожидающих лупов
   loopRefs.value.forEach((comp) => {
     if (comp && typeof comp.startSyncedRecording === 'function' && typeof comp.isWaitingForSync === 'function' && comp.isWaitingForSync() === true) {
       comp.startSyncedRecording();
     }
   });
+
   const activeIds = getActiveLoopIds();
   if (activeIds.length === 0) return;
   playingLoops.value = new Set(activeIds);
+
+  // Запускаем воспроизведение всех лупов с синхронизацией
   loopRefs.value.forEach((comp) => {
     if (comp && comp.audioUrl) {
       comp.playAudio();
@@ -144,6 +164,12 @@ async function latencyCheck() {
   const latency = Math.round((peakTime + 0.5) * 1000); // +0.5s — учёт буфера
   latencyMs.value = latency;
 }
+
+const cycleDurationFormatted = computed(() => {
+  const cycleDuration = syncStore.cycleDuration.value;
+  if (cycleDuration <= 0) return '0.0s';
+  return cycleDuration.toFixed(1) + 's';
+});
 </script>
 
 <style scoped>
@@ -176,5 +202,23 @@ async function latencyCheck() {
     margin-top: 24px;
     margin-bottom: 10px;
   }
+}
+
+.sync-status {
+  background: rgba(76, 175, 80, 0.1);
+  border-radius: 12px;
+  padding: 12px 16px;
+  border: 1px solid rgba(76, 175, 80, 0.2);
+  backdrop-filter: blur(10px);
+}
+
+.sync-status .text-subtitle2 {
+  color: rgba(76, 175, 80, 0.9);
+  font-weight: 600;
+}
+
+.sync-status .text-caption {
+  color: rgba(76, 175, 80, 0.8);
+  font-weight: 500;
 }
 </style>
