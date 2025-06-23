@@ -27,14 +27,15 @@
         :loopId="id"
         ref="loopRefs"
         @ended="onLoopEnded(id)"
-        :canRecord="id === 1 || !!loopRefs[0]?.audioUrl"
+        :canRecord="id === 1 || (masterDuration > 0)"
+        :masterDuration="masterDuration || 0"
       />
     </div>
   </q-page>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
 import LoopTrack from 'components/LoopTrack.vue';
 import MicLevelBar from 'components/MicLevelBar.vue';
 
@@ -42,6 +43,12 @@ const loopRefs = ref<InstanceType<typeof LoopTrack>[]>([]);
 const isPlayingAll = ref(false);
 const latencyMs = ref<number|null>(null);
 const playingLoops = ref<Set<number>>(new Set());
+
+const masterDuration = computed(() => {
+  const first = loopRefs.value[0];
+  const dur = Number(first && first.audioDuration ? first.audioDuration : 0);
+  return isFinite(dur) && dur > 0 ? dur : 0;
+});
 
 function getActiveLoopIds() {
   return loopRefs.value
