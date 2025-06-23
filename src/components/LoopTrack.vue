@@ -85,6 +85,7 @@
         size="md"
       />
     </div>
+
     <audio v-if="audioUrl" :src="audioUrl" ref="audioRef" style="display:none" />
   </div>
 </template>
@@ -93,6 +94,7 @@
 import { ref, defineExpose, watch, defineEmits, onUnmounted, computed } from 'vue';
 import CircularProgress from './CircularProgress.vue';
 import { syncStore } from '../stores/sync-store';
+import { settingsStore } from '../stores/settings-store';
 
 const props = defineProps<{
   loopId: number,
@@ -259,7 +261,7 @@ function checkSoundLevel() {
     const val = Math.abs(((dataArray[i] ?? 0) - 128) / 128);
     if (val > peak) peak = val;
   }
-  if (peak > 0.2) {
+  if (peak > (settingsStore.soundThreshold.value || 0.2)) {
     stopMicMonitor();
     startRecording().catch(console.error);
   } else {

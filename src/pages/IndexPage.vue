@@ -1,6 +1,7 @@
 <template>
   <q-page class="column items-center q-pa-md q-gutter-md">
     <MicLevelBar />
+    <MetronomeComponent />
     <div class="looper-grid q-mb-md">
       <LoopTrack
         v-for="id in 4"
@@ -31,6 +32,7 @@
 import { ref, computed } from 'vue';
 import LoopTrack from 'components/LoopTrack.vue';
 import MicLevelBar from 'components/MicLevelBar.vue';
+import MetronomeComponent from 'components/Metronome.vue';
 import { syncStore } from '../stores/sync-store';
 
 const loopRefs = ref<InstanceType<typeof LoopTrack>[]>([]);
