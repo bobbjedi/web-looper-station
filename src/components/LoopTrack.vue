@@ -6,9 +6,28 @@
         {{ audioUrl ? 'Есть запись' : 'Пусто' }}
       </q-badge>
     </div>
+
+    <!-- Круговой прогресс -->
+    <div class="q-mt-md">
+      <CircularProgress
+        :progress="progressValue"
+        :duration="masterDuration"
+        :color="progressColor"
+        :backgroundColor="circleBgColor"
+        :showText="false"
+        :size="100"
+      >
+        <template #default>
+          <q-icon v-if="isRecording" name="mic" color="red" size="36px" />
+          <q-icon v-else-if="isPlaying || isInCycle" name="play_arrow" color="green" size="36px" />
+          <q-icon v-else-if="audioUrl" name="check_circle" color="primary" size="36px" />
+          <q-icon v-else name="radio_button_unchecked" color="grey" size="36px" />
+        </template>
+      </CircularProgress>
+    </div>
+
     <div class="q-mt-md column items-stretch">
       <q-btn :color="isRecording ? 'red' : 'primary'" icon="mic" @click="toggleRecording" :label="isRecording ? 'Стоп' : isWaitingForSound ? 'Жду звук...' : 'Запись'" class="btn-fixed q-mb-sm" :disable="props.canRecord === false || (isWaitingForSound && !isRecording)" />
-      <q-btn :color="isPlaying ? 'green' : 'primary'" icon="play_arrow" @click="togglePlayback" :label="isPlaying ? 'Стоп' : 'Воспроизвести'" :disable="!audioUrl" class="btn-fixed q-mb-sm" />
       <q-btn :color="isMuted ? 'grey' : 'primary'" :icon="isMuted ? 'volume_off' : 'volume_up'" @click="toggleMute" :label="isMuted ? 'Заглушен' : 'Mute'" :disable="!audioUrl" class="btn-fixed q-mb-sm" />
       <q-btn color="negative" icon="delete" @click="resetLoop" label="Сброс" class="btn-fixed" />
     </div>
@@ -23,7 +42,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, defineExpose, watch, defineEmits, onUnmounted } from 'vue';
+import { ref, defineExpose, watch, defineEmits, onUnmounted, computed } from 'vue';
+import CircularProgress from './CircularProgress.vue';
 
 const props = defineProps<{ loopId: number, canRecord?: boolean, masterDuration?: number }>();
 
@@ -37,6 +57,7 @@ const isInCycle = ref(false);
 const audioUrl = ref<string | null>(null);
 const audioRef = ref<HTMLAudioElement | null>(null);
 const audioDuration = ref<number | null>(null);
+const currentTime = ref(0);
 let mediaRecorder: MediaRecorder | null = null;
 let audioChunks: Blob[] = [];
 let micStream: MediaStream | null = null;
@@ -45,6 +66,36 @@ let analyser: AnalyserNode | null = null;
 let dataArray: Uint8Array = new Uint8Array(0);
 let waitSoundTimer: number | null = null;
 let autoStopTimer: number | null = null;
+let progressTimer: number | null = null;
+
+// Computed свойства для прогресса
+const masterDuration = computed(() => {
+  return Number(props.masterDuration) || 0;
+});
+
+const shouldShowProgress = computed(() => {
+  // Показываем прогресс при воспроизведении или записи >1 лупа
+  return (isPlaying.value || isInCycle.value) || (isRecording.value && props.loopId > 1);
+});
+
+const progressValue = computed(() => {
+  if (!shouldShowProgress.value || masterDuration.value <= 0) return 0;
+  return Math.min(1, currentTime.value / masterDuration.value);
+});
+
+const progressColor = computed(() => {
+  if (isRecording.value) return 'rgba(244, 67, 54, 0.8)'; // полупрозрачный красный для записи
+  if (isPlaying.value || isInCycle.value) return 'rgba(76, 175, 80, 0.8)'; // полупрозрачный зелёный для воспроизведения
+  return 'rgba(33, 150, 243, 0.8)'; // полупрозрачный синий по умолчанию
+});
+
+const circleBgColor = computed(() => {
+  // Если луп замьючен - полупрозрачный серый фон
+  if (isMuted.value) return 'rgba(117, 117, 117, 0.3)'; // полупрозрачный серый для замьюченного состояния
+  if (isRecording.value) return 'rgba(244, 67, 54, 0.2)'; // полупрозрачный красный фон для записи
+  if (isPlaying.value || isInCycle.value) return 'rgba(76, 175, 80, 0.2)'; // полупрозрачный зелёный фон для воспроизведения
+  return 'rgba(33, 150, 243, 0.2)'; // полупрозрачный синий фон по умолчанию
+});
 
 function toggleRecording() {
   if (!isRecording.value) {
@@ -108,6 +159,8 @@ async function startRecording() {
       console.warn('Некорректный masterDuration для loopId', props.loopId, ':', props.masterDuration);
       return;
     }
+    // Запускаем прогресс для записи >1 лупа
+    startProgressTimer();
   }
   console.log('startRecording', props.loopId, 'masterDuration:', props.masterDuration);
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -150,6 +203,10 @@ async function startRecording() {
         }
       };
     }
+    // Автоматически запускаем воспроизведение после записи
+    if (audioUrl.value) {
+      playAudio();
+    }
   };
   mediaRecorder.start();
   isRecording.value = true;
@@ -175,14 +232,23 @@ function stopRecording() {
     mediaRecorder.stop();
     isRecording.value = false;
   }
+  stopProgressTimer();
 }
 
-function togglePlayback() {
-  if (!isPlaying.value) {
-    playAudio();
-  } else {
-    stopAudio();
+function startProgressTimer() {
+  stopProgressTimer();
+  currentTime.value = 0;
+  progressTimer = window.setInterval(() => {
+    currentTime.value += 0.1; // обновляем каждые 100мс
+  }, 100);
+}
+
+function stopProgressTimer() {
+  if (progressTimer) {
+    clearInterval(progressTimer);
+    progressTimer = null;
   }
+  currentTime.value = 0;
 }
 
 function playAudio() {
@@ -191,6 +257,7 @@ function playAudio() {
     void audioRef.value.play();
     isPlaying.value = true;
     isInCycle.value = true;
+    startProgressTimer();
     audioRef.value.onended = () => {
       isPlaying.value = false;
       emit('ended');
@@ -202,6 +269,7 @@ function playAudio() {
       setTimeout(() => {
         if (isPlaying.value) {
           isPlaying.value = false;
+          stopProgressTimer();
           // Не сбрасываем isInCycle здесь - он сбросится только при полной остановке
         }
       }, props.masterDuration * 1000);
@@ -215,6 +283,7 @@ function stopAudio() {
     audioRef.value.currentTime = 0;
     isPlaying.value = false;
     isInCycle.value = false;
+    stopProgressTimer();
   }
 }
 
@@ -235,6 +304,7 @@ function resetLoop() {
   isMuted.value = false;
   isPlaying.value = false;
   isInCycle.value = false;
+  stopProgressTimer();
 }
 
 // Если mute меняется во время воспроизведения
@@ -248,6 +318,7 @@ defineExpose({ playAudio, stopAudio, isPlaying, audioUrl, audioDuration, isInCyc
 
 onUnmounted(() => {
   stopMicMonitor();
+  stopProgressTimer();
 });
 </script>
 

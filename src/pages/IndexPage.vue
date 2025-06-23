@@ -2,14 +2,6 @@
   <q-page class="column items-center q-pa-md q-gutter-md">
     <MicLevelBar />
     <q-btn
-      color="primary"
-      class="q-mb-md"
-      :label="isPlayingAll ? 'Стоп все лупы' : 'Старт все лупы'"
-      icon="play_circle"
-      @click="toggleAll"
-      size="lg"
-    />
-    <q-btn
       color="secondary"
       class="q-mb-lg"
       label="Проверить задержку"
@@ -27,6 +19,7 @@
         :loopId="id"
         ref="loopRefs"
         @ended="onLoopEnded(id)"
+        @first-recorded="onFirstRecorded"
         :canRecord="id === 1 || (masterDuration > 0)"
         :masterDuration="masterDuration || 0"
       />
@@ -40,7 +33,6 @@ import LoopTrack from 'components/LoopTrack.vue';
 import MicLevelBar from 'components/MicLevelBar.vue';
 
 const loopRefs = ref<InstanceType<typeof LoopTrack>[]>([]);
-const isPlayingAll = ref(false);
 const latencyMs = ref<number|null>(null);
 const playingLoops = ref<Set<number>>(new Set());
 
@@ -70,30 +62,14 @@ function startLoopCycle() {
 
 function onLoopEnded(id: number) {
   playingLoops.value.delete(id);
-  if (isPlayingAll.value && playingLoops.value.size === 0) {
+  if (playingLoops.value.size === 0) {
     // Все лупы закончили — запускаем следующий цикл
     setTimeout(() => startLoopCycle(), 0);
   }
 }
 
-function stopLoopCycle() {
-  console.log('stopLoopCycle');
-  playingLoops.value.clear();
-  loopRefs.value.forEach((comp) => {
-    if (comp && comp.isPlaying) {
-      comp.stopAudio();
-    }
-  });
-}
-
-function toggleAll() {
-  if (!isPlayingAll.value) {
-    startLoopCycle();
-    isPlayingAll.value = true;
-  } else {
-    stopLoopCycle();
-    isPlayingAll.value = false;
-  }
+function onFirstRecorded() {
+  startLoopCycle();
 }
 
 async function latencyCheck() {

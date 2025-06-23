@@ -12,8 +12,17 @@
         />
 
         <q-toolbar-title>
-          Quasar App
+          Looper App
         </q-toolbar-title>
+
+        <q-btn
+          flat
+          dense
+          round
+          :icon="$q.dark.isActive ? 'light_mode' : 'dark_mode'"
+          aria-label="Toggle Dark Mode"
+          @click="toggleDarkMode"
+        />
 
         <div>Quasar v{{ $q.version }}</div>
       </q-toolbar>
@@ -47,7 +56,10 @@
 
 <script setup lang="ts">
 import { ref } from 'vue';
+import { useQuasar } from 'quasar';
 import EssentialLink, { type EssentialLinkProps } from 'components/EssentialLink.vue';
+
+const $q = useQuasar();
 
 const linksList: EssentialLinkProps[] = [
   {
@@ -98,5 +110,9 @@ const leftDrawerOpen = ref(false);
 
 function toggleLeftDrawer () {
   leftDrawerOpen.value = !leftDrawerOpen.value;
+}
+
+function toggleDarkMode() {
+  $q.dark.toggle();
 }
 </script>
