@@ -931,9 +931,9 @@ async function onRecordingComplete() {
         const fullDuration = audioBuffer.duration;
 
         // Проверяем, что текущая длительность значительно меньше полной записи
-        // и находится в пределах настроек (4-8 секунд)
-        const minExpectedDuration = (settingsStore.maxLoopDuration.value ?? 8) / 2; // 4 секунды
-        const maxExpectedDuration = settingsStore.maxLoopDuration.value ?? 8; // 8 секунд
+        // и находится в пределах настроек (minLoopDuration - maxLoopDuration)
+        const minExpectedDuration = settingsStore.minLoopDuration.value ?? 4; // минимальная длительность
+        const maxExpectedDuration = settingsStore.maxLoopDuration.value ?? 8; // максимальная длительность (2 * min)
         const hasAutoAnalysisAlreadyWorked = audioDuration.value >= minExpectedDuration &&
                                            audioDuration.value <= maxExpectedDuration &&
                                            audioDuration.value < fullDuration * 0.8; // меньше 80% от полной записи
@@ -961,10 +961,10 @@ async function onRecordingComplete() {
             ? audioBuffer.numberOfChannels
             : 1;
           const maxSec = settingsStore.maxLoopDuration.value ?? 8;
-          const minSec = Math.max(0.2, (settingsStore.maxLoopDuration.value ?? 8) / 2);
-          console.log('[Looper] Анализ автонарезки: sampleRate=', sampleRate, 'duration=', duration, 'channels=', numberOfChannels, 'minSec=', minSec, 'maxSec=', maxSec);
+          const minSec = settingsStore.minLoopDuration.value ?? 4;
+          console.log(`📊 [Loop ${props.loopId}] Анализ текущей записи: sampleRate=${sampleRate}, duration=${duration.toFixed(2)}, minSec=${minSec}, maxSec=${maxSec}`);
           const bestLag = detectLoopLengthByAutocorrelation(samples, sampleRate, minSec, maxSec, settingsStore.autocorrAccuracy.value);
-          console.log('[Looper] Автокорреляция: bestLag=', bestLag, 'секунд:', (bestLag / sampleRate).toFixed(3), 'из', samples.length, 'samples');
+          console.log(`🎵 [Loop ${props.loopId}] Результат анализа текущей записи: bestLag=${bestLag}, новая длительность=${bestLag / sampleRate}с`);
           if (bestLag > sampleRate * 0.5 && bestLag < samples.length * 0.9) {
             // Берём второй кусок длиной bestLag (а не первый)
             const startIdx = bestLag;
@@ -979,7 +979,7 @@ async function onRecordingComplete() {
             }
             targetDuration = actualLen / sampleRate;
             usedAutocorr = true;
-            console.log('[Looper] Автонарезка сработала! Новый цикл (2-й кусок):', targetDuration.toFixed(3), 'секунд');
+            console.log(`🎯 [Loop ${props.loopId}] Автонарезка сработала! Новый цикл (2-й кусок): ${targetDuration.toFixed(3)} секунд`);
           } else {
             console.log('[Looper] Автонарезка не сработала, используем всю запись.');
           }
@@ -1248,7 +1248,7 @@ async function performRealTimeAnalysis() {
         : samples.length / sampleRate;
 
       const maxSec = settingsStore.maxLoopDuration.value ?? 8;
-      const minSec = Math.max(0.2, (settingsStore.maxLoopDuration.value ?? 8) / 2);
+      const minSec = settingsStore.minLoopDuration.value ?? 4;
 
       console.log(`📊 [Loop ${props.loopId}] Анализ текущей записи: sampleRate=${sampleRate}, duration=${duration.toFixed(2)}, minSec=${minSec}, maxSec=${maxSec}`);
 
@@ -1310,8 +1310,8 @@ async function performRealTimeAnalysis() {
         ? audioBuffer.numberOfChannels
         : 1;
 
+      const minSec = settingsStore.minLoopDuration.value ?? 4;
       const maxSec = settingsStore.maxLoopDuration.value ?? 8;
-      const minSec = Math.max(0.2, (settingsStore.maxLoopDuration.value ?? 8) / 2);
 
       console.log(`📊 [Loop ${props.loopId}] Анализ готового лупа: sampleRate=${sampleRate}, duration=${duration}, minSec=${minSec}, maxSec=${maxSec}`);
 

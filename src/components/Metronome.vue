@@ -112,14 +112,14 @@
           {{ getAccuracyDescription(settingsStore.autocorrAccuracy.value ?? 3) }}
         </span>
       </div>
-      <!-- Максимальная длительность лупа -->
+      <!-- Минимальная длительность лупа -->
       <div class="max-loop-duration-controls row items-center q-gutter-xs">
         <q-icon name="timelapse" size="16px" color="blue" />
         <q-slider
-          :model-value="settingsStore.maxLoopDuration.value ?? 8"
-          @update:model-value="val => settingsStore.maxLoopDuration.value = val ?? 8"
-          :min="2"
-          :max="20"
+          :model-value="settingsStore.minLoopDuration.value ?? 4"
+          @update:model-value="val => settingsStore.minLoopDuration.value = val ?? 4"
+          :min="1"
+          :max="10"
           :step="0.5"
           color="blue"
           class="max-loop-slider"
@@ -128,7 +128,7 @@
           label-always
         />
         <span class="max-loop-value text-caption">
-          {{ settingsStore.maxLoopDuration.value ?? 8 }} сек
+          {{ settingsStore.minLoopDuration.value ?? 4 }} сек (мин)
         </span>
       </div>
     </div>

@@ -1,4 +1,4 @@
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
 
 // Глобальный стейт для настроек приложения
 export const useSettingsStore = () => {
@@ -8,12 +8,16 @@ export const useSettingsStore = () => {
   // Точность поиска автокорреляции для первого лупа (1-10, где 1=максимум, 10=быстро)
   const autocorrAccuracy = ref(3);
 
-  // Максимальная длительность лупа (секунды)
-  const maxLoopDuration = ref(8);
+  // Минимальная длительность лупа (секунды)
+  const minLoopDuration = ref(4);
+
+  // Максимальная длительность лупа = 2 * минимальная
+  const maxLoopDuration = computed(() => minLoopDuration.value * 2);
 
   return {
     soundThreshold,
     autocorrAccuracy,
+    minLoopDuration,
     maxLoopDuration
   };
 };

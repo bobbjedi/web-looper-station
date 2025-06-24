@@ -295,6 +295,15 @@ export const useSyncStore = () => {
       return;
     }
 
+    // Проверяем, есть ли активная синхронизация (запись идет)
+    if (!isSyncActive.value) {
+      console.log('⏸️ [AutoAnalysis] Не запускаем автоанализ - нет активной синхронизации (запись не идет)', {
+        timestamp: new Date().toISOString(),
+        isSyncActive: isSyncActive.value
+      });
+      return;
+    }
+
     isAutoAnalysisActive.value = true;
     console.log('🚀 [AutoAnalysis] Запуск периодического анализа длительности лупа', {
       interval: autoAnalysisInterval.value,
@@ -341,6 +350,15 @@ export const useSyncStore = () => {
 
   // Выполнение автоматического анализа длительности
   function performAutoAnalysis() {
+    // Проверяем, есть ли активная синхронизация (запись идет)
+    if (!isSyncActive.value) {
+      console.log('⏸️ [AutoAnalysis] Пропуск анализа - нет активной синхронизации (запись не идет)', {
+        timestamp: new Date().toISOString(),
+        isSyncActive: isSyncActive.value
+      });
+      return;
+    }
+
     console.log('🔄 [AutoAnalysis] Выполняется автоматический анализ длительности лупа', {
       timestamp: new Date().toISOString(),
       currentCycleDuration: cycleDuration.value,
@@ -365,8 +383,8 @@ export const useSyncStore = () => {
   function setAutoAnalysisInterval(interval: number) {
     autoAnalysisInterval.value = Math.max(500, Math.min(10000, interval)); // от 500мс до 10с
 
-    // Перезапускаем таймер если анализ активен
-    if (isAutoAnalysisActive.value) {
+    // Перезапускаем таймер если анализ активен И есть активная синхронизация (запись идет)
+    if (isAutoAnalysisActive.value && isSyncActive.value) {
       stopAutoAnalysis();
       startAutoAnalysis();
     }
