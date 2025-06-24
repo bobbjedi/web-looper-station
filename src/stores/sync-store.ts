@@ -18,6 +18,11 @@ export const useSyncStore = () => {
   const currentBeat = ref<number>(0); // Текущий удар в такте
   const totalBeats = ref<number>(0); // Общее количество ударов в цикле
 
+  // Периодический анализ длительности лупа
+  const isAutoAnalysisActive = ref<boolean>(true); // Флаг активности автоматического анализа
+  const autoAnalysisInterval = ref<number>(2000); // Интервал анализа в миллисекундах (2 секунды)
+  let autoAnalysisTimer: number | null = null; // Таймер для периодического анализа
+
   // Таймеры
   let syncTimer: number | null = null;
   let metronomeTimer: number | null = null;
@@ -160,9 +165,13 @@ export const useSyncStore = () => {
 
   // Запуск синхронизации (вызывается первым лупом при записи)
   function startSync(duration: number) {
+    console.log('🔄 [Sync] startSync вызван:', { duration, currentIsSyncActive: isSyncActive.value });
+
     cycleDuration.value = duration;
     currentCycleStart.value = Date.now();
     isSyncActive.value = true;
+
+    console.log('✅ [Sync] isSyncActive установлен в true');
 
     // Автоматически рассчитываем BPM и количество ударов
     const calculatedBpm = calculateBpmFromDuration(duration);
@@ -273,6 +282,94 @@ export const useSyncStore = () => {
   function cleanup() {
     stopSyncTimer();
     stopMetronome();
+    stopAutoAnalysis();
+  }
+
+  // Запуск периодического анализа длительности лупа
+  function startAutoAnalysis() {
+    if (isAutoAnalysisActive.value) {
+      console.log('⚠️ [AutoAnalysis] Автоанализ уже активен, повторный запуск не требуется', {
+        autoAnalysisTimer: !!autoAnalysisTimer,
+        timestamp: new Date().toISOString()
+      });
+      return;
+    }
+
+    isAutoAnalysisActive.value = true;
+    console.log('🚀 [AutoAnalysis] Запуск периодического анализа длительности лупа', {
+      interval: autoAnalysisInterval.value,
+      timestamp: new Date().toISOString()
+    });
+
+    autoAnalysisTimer = window.setInterval(() => {
+      console.log('⏰ [AutoAnalysis] Таймер сработал', {
+        isAutoAnalysisActive: isAutoAnalysisActive.value,
+        timestamp: new Date().toISOString()
+      });
+
+      if (isAutoAnalysisActive.value) {
+        performAutoAnalysis();
+      } else {
+        console.log('⏸️ [AutoAnalysis] Пропуск анализа - автоанализ неактивен');
+      }
+    }, autoAnalysisInterval.value);
+
+    console.log('✅ [AutoAnalysis] Таймер установлен:', {
+      timerId: autoAnalysisTimer,
+      interval: autoAnalysisInterval.value
+    });
+  }
+
+  // Остановка периодического анализа
+  function stopAutoAnalysis() {
+    console.log('🛑 [AutoAnalysis] stopAutoAnalysis вызван', {
+      hasTimer: !!autoAnalysisTimer,
+      isAutoAnalysisActive: isAutoAnalysisActive.value,
+      timestamp: new Date().toISOString()
+    });
+
+    if (autoAnalysisTimer) {
+      clearInterval(autoAnalysisTimer);
+      autoAnalysisTimer = null;
+      console.log('✅ [AutoAnalysis] Таймер очищен');
+    }
+    isAutoAnalysisActive.value = false;
+    console.log('🛑 [AutoAnalysis] Остановка периодического анализа длительности лупа', {
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  // Выполнение автоматического анализа длительности
+  function performAutoAnalysis() {
+    console.log('🔄 [AutoAnalysis] Выполняется автоматический анализ длительности лупа', {
+      timestamp: new Date().toISOString(),
+      currentCycleDuration: cycleDuration.value,
+      isSyncActive: isSyncActive.value,
+      isAutoAnalysisActive: isAutoAnalysisActive.value,
+      autoAnalysisInterval: autoAnalysisInterval.value
+    });
+
+    // Эмитим событие для компонентов, чтобы они могли обновить свои лупы
+    const event = new CustomEvent('auto-analysis-request', {
+      detail: {
+        timestamp: Date.now(),
+        currentCycleDuration: cycleDuration.value
+      }
+    });
+    window.dispatchEvent(event);
+
+    console.log('📡 [AutoAnalysis] Событие auto-analysis-request отправлено');
+  }
+
+  // Установка интервала анализа
+  function setAutoAnalysisInterval(interval: number) {
+    autoAnalysisInterval.value = Math.max(500, Math.min(10000, interval)); // от 500мс до 10с
+
+    // Перезапускаем таймер если анализ активен
+    if (isAutoAnalysisActive.value) {
+      stopAutoAnalysis();
+      startAutoAnalysis();
+    }
   }
 
   return {
@@ -290,6 +387,8 @@ export const useSyncStore = () => {
     currentBeatInCycle,
     beatPosition,
     timeToNextBeat,
+    isAutoAnalysisActive,
+    autoAnalysisInterval,
 
     // Методы
     startSync,
@@ -301,6 +400,9 @@ export const useSyncStore = () => {
     getTimeToNextBeat,
     isNearBeat,
     calculateBpmFromDuration,
+    startAutoAnalysis,
+    stopAutoAnalysis,
+    setAutoAnalysisInterval,
     cleanup
   };
 };

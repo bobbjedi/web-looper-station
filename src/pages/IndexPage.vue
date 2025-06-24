@@ -1,6 +1,9 @@
 <template>
   <q-page class="column items-center q-pa-md q-gutter-md">
     <MicLevelBar />
+    <div class="cycle-duration-label q-mb-sm">
+      Длительность цикла: {{ syncStore.cycleDuration.value.toFixed(2) }} сек
+    </div>
     <MetronomeComponent ref="metronomeRef" />
     <div class="looper-grid q-mb-md">
       <LoopTrack
@@ -9,7 +12,6 @@
         :loopId="id"
         ref="loopRefs"
         :metronomeRef="metronomeRef"
-        @ended="onLoopEnded(id)"
         @first-recorded="onFirstRecorded"
         :canRecord="id === 1 || (masterDuration > 0)"
         :masterDuration="masterDuration || 0"
@@ -55,7 +57,6 @@ import { syncStore } from '../stores/sync-store';
 const loopRefs = ref<InstanceType<typeof LoopTrack>[]>([]);
 const metronomeRef = ref<InstanceType<typeof MetronomeComponent> | null>(null);
 const latencyMs = ref<number|null>(null);
-const playingLoops = ref<Set<number>>(new Set());
 
 const masterDuration = computed(() => {
   const first = loopRefs.value[0];
@@ -83,22 +84,14 @@ function startLoopCycle() {
 
   const activeIds = getActiveLoopIds();
   if (activeIds.length === 0) return;
-  playingLoops.value = new Set(activeIds);
 
   // Запускаем воспроизведение всех лупов с синхронизацией
+  // Теперь лупы зацикливаются автоматически, поэтому не нужно отслеживать их завершение
   loopRefs.value.forEach((comp) => {
     if (comp && comp.audioUrl) {
       comp.playAudio();
     }
   });
-}
-
-function onLoopEnded(id: number) {
-  playingLoops.value.delete(id);
-  if (playingLoops.value.size === 0) {
-    // Все лупы закончили — запускаем следующий цикл
-    setTimeout(() => startLoopCycle(), 0);
-  }
 }
 
 function onFirstRecorded() {
@@ -220,5 +213,14 @@ const cycleDurationFormatted = computed(() => {
 .sync-status .text-caption {
   color: rgba(76, 175, 80, 0.8);
   font-weight: 500;
+}
+
+.cycle-duration-label {
+  font-size: 0.98rem;
+  color: #90a4ae;
+  text-align: center;
+  font-weight: 500;
+  margin-bottom: 8px;
+  letter-spacing: 0.01em;
 }
 </style>

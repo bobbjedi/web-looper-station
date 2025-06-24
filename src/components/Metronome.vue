@@ -90,6 +90,84 @@
         </div>
       </div>
     </div>
+
+    <!-- Ряд с точностью автонарезки и макс. длительностью лупа -->
+    <div class="autocorr-row row items-center justify-center q-gutter-lg q-mt-sm">
+      <!-- Точность автонарезки -->
+      <div class="autocorr-accuracy-controls row items-center q-gutter-xs">
+        <q-icon name="precision_manufacturing" size="16px" color="purple" />
+        <q-slider
+          :model-value="settingsStore.autocorrAccuracy.value ?? 3"
+          @update:model-value="val => settingsStore.autocorrAccuracy.value = val ?? 3"
+          :min="1"
+          :max="10"
+          :step="1"
+          color="purple"
+          class="autocorr-slider"
+          style="width: 80px;"
+          label
+          label-always
+        />
+        <span class="autocorr-value text-caption">
+          {{ getAccuracyDescription(settingsStore.autocorrAccuracy.value ?? 3) }}
+        </span>
+      </div>
+      <!-- Максимальная длительность лупа -->
+      <div class="max-loop-duration-controls row items-center q-gutter-xs">
+        <q-icon name="timelapse" size="16px" color="blue" />
+        <q-slider
+          :model-value="settingsStore.maxLoopDuration.value ?? 8"
+          @update:model-value="val => settingsStore.maxLoopDuration.value = val ?? 8"
+          :min="2"
+          :max="20"
+          :step="0.5"
+          color="blue"
+          class="max-loop-slider"
+          style="width: 80px;"
+          label
+          label-always
+        />
+        <span class="max-loop-value text-caption">
+          {{ settingsStore.maxLoopDuration.value ?? 8 }} сек
+        </span>
+      </div>
+    </div>
+
+    <!-- Ряд с автоматическим анализом -->
+    <div class="auto-analysis-row row items-center justify-center q-gutter-lg q-mt-sm">
+      <!-- Переключатель автоматического анализа -->
+      <div class="auto-analysis-toggle-controls row items-center q-gutter-xs">
+        <q-icon name="auto_awesome" size="16px" :color="syncStore.isAutoAnalysisActive.value ? 'green' : 'grey'" />
+        <q-toggle
+          :model-value="syncStore.isAutoAnalysisActive.value"
+          @update:model-value="toggleAutoAnalysis"
+          color="green"
+          size="sm"
+        />
+        <span class="auto-analysis-label text-caption">
+          {{ syncStore.isAutoAnalysisActive.value ? 'Автоанализ ВКЛ' : 'Автоанализ ВЫКЛ' }}
+        </span>
+      </div>
+      <!-- Интервал анализа -->
+      <div class="analysis-interval-controls row items-center q-gutter-xs">
+        <q-icon name="schedule" size="16px" color="orange" />
+        <q-slider
+          :model-value="syncStore.autoAnalysisInterval.value / 1000"
+          @update:model-value="val => syncStore.setAutoAnalysisInterval((val ?? 2) * 1000)"
+          :min="0.5"
+          :max="10"
+          :step="0.5"
+          color="orange"
+          class="analysis-interval-slider"
+          style="width: 80px;"
+          label
+          label-always
+        />
+        <span class="analysis-interval-value text-caption">
+          {{ (syncStore.autoAnalysisInterval.value / 1000).toFixed(1) }} сек
+        </span>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -171,6 +249,24 @@ defineExpose({
 const cycleDurationFormatted = computed(() => syncStore.cycleDuration.value.toFixed(1));
 const currentBeatFormatted = computed(() => syncStore.currentBeat.value + 1);
 const timeToNextBeatFormatted = computed(() => (syncStore.timeToNextBeat.value * 1000).toFixed(0));
+
+// Функция для получения описания точности автонарезки
+function getAccuracyDescription(accuracy: number): string {
+  if (accuracy <= 2) return 'Максимальная точность (медленно)';
+  if (accuracy <= 4) return 'Высокая точность';
+  if (accuracy <= 6) return 'Средняя точность';
+  if (accuracy <= 8) return 'Быстрая обработка';
+  return 'Очень быстро (менее точно)';
+}
+
+// Функция переключения автоматического анализа
+function toggleAutoAnalysis() {
+  if (syncStore.isAutoAnalysisActive.value) {
+    syncStore.stopAutoAnalysis();
+  } else {
+    syncStore.startAutoAnalysis();
+  }
+}
 </script>
 
 <style scoped>
@@ -329,6 +425,86 @@ const timeToNextBeatFormatted = computed(() => (syncStore.timeToNextBeat.value *
   .sensitivity-value {
     min-width: 25px;
     font-size: 0.75rem;
+  }
+}
+
+.autocorr-row {
+  margin-top: 18px;
+  gap: 32px;
+}
+
+.autocorr-accuracy-controls, .max-loop-duration-controls {
+  background: rgba(255,255,255,0.04);
+  border-radius: 10px;
+  padding: 6px 12px;
+  align-items: center;
+}
+
+.autocorr-slider, .max-loop-slider {
+  min-width: 60px;
+  max-width: 90px;
+}
+
+.autocorr-value, .max-loop-value {
+  color: rgba(255,255,255,0.8);
+  font-weight: 500;
+  min-width: 40px;
+  text-align: center;
+}
+
+@media (max-width: 600px) {
+  .autocorr-row {
+    flex-direction: column;
+    gap: 10px;
+  }
+  .autocorr-accuracy-controls, .max-loop-duration-controls {
+    width: 100%;
+    justify-content: center;
+    padding: 6px 4px;
+  }
+  .autocorr-slider, .max-loop-slider {
+    min-width: 40px;
+    max-width: 100px;
+  }
+}
+
+.auto-analysis-row {
+  margin-top: 18px;
+  gap: 32px;
+}
+
+.auto-analysis-toggle-controls, .analysis-interval-controls {
+  background: rgba(255,255,255,0.04);
+  border-radius: 10px;
+  padding: 6px 12px;
+  align-items: center;
+}
+
+.auto-analysis-slider, .analysis-interval-slider {
+  min-width: 60px;
+  max-width: 90px;
+}
+
+.auto-analysis-label, .analysis-interval-value {
+  color: rgba(255,255,255,0.8);
+  font-weight: 500;
+  min-width: 40px;
+  text-align: center;
+}
+
+@media (max-width: 600px) {
+  .auto-analysis-row {
+    flex-direction: column;
+    gap: 10px;
+  }
+  .auto-analysis-toggle-controls, .analysis-interval-controls {
+    width: 100%;
+    justify-content: center;
+    padding: 6px 4px;
+  }
+  .auto-analysis-slider, .analysis-interval-slider {
+    min-width: 40px;
+    max-width: 100px;
   }
 }
 </style>

@@ -1,5 +1,9 @@
 <template>
   <div class="loop-track-wrapper flex flex-column items-center q-mb-lg">
+    <!-- Финальная длительность лупа -->
+    <div v-if="audioDuration && !isRecording" class="final-duration q-mb-xs">
+      Длительность лупа: {{ audioDuration.toFixed(2) }} сек
+    </div>
     <!-- Универсальный круговой прогресс -->
     <div class="circle-wrapper"
       @wheel.prevent="onWheelVolume"
@@ -28,8 +32,9 @@
         }"
       >
         <template #default>
+          <span v-if="isRecording && props.loopId === 1" class="timer-in-circle">{{ currentTime.toFixed(1) }}</span>
           <q-icon
-            v-if="isRecording"
+            v-else-if="isRecording"
             name="mic"
             color="red"
             size="36px"
@@ -231,11 +236,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, defineExpose, watch, defineEmits, onUnmounted, computed } from 'vue';
+import { ref, defineExpose, watch, defineEmits, onUnmounted, computed, onMounted } from 'vue';
 import CircularProgress from './CircularProgress.vue';
 import AudioWaveform from './AudioWaveform.vue';
 import { syncStore } from '../stores/sync-store';
 import { settingsStore } from '../stores/settings-store';
+import { processRecordedAudio, audioBufferToWav, detectLoopLengthByAutocorrelation } from '../utils/audio-utils';
 
 const props = defineProps<{
   loopId: number,
@@ -289,10 +295,16 @@ let lastTouchY = 0;
 
 // Универсальные computed свойства для всех состояний
 const universalProgress = computed(() => {
-  if (isWaitingForSync.value && syncStore.isSyncActive.value) {
+  // Если луп воспроизводится или находится в цикле — используем глобальный прогресс
+  if (isPlaying.value || isInCycle.value) {
     return syncStore.currentCycleProgress.value;
   }
-  return progressValue.value;
+  // Если идет запись (кроме первого лупа) — используем локальный прогресс
+  if (isRecording.value && props.loopId > 1) {
+    return progressValue.value;
+  }
+  // Остальные состояния (например, редактирование)
+  return 0;
 });
 
 const universalProgressColor = computed(() => {
@@ -471,6 +483,22 @@ async function startRecording() {
   if (props.loopId === 1) {
     // Запускаем синхронизацию с примерной длительностью (будет обновлена после записи)
     syncStore.startSync(5); // временная длительность
+    // Запускаем таймер для отображения времени записи
+    startProgressTimer();
+
+    // СРАЗУ запускаем автоанализ для первого лупа во время записи
+    console.log(`🚀 [Loop ${props.loopId}] Запускаем автоанализ во время записи`, {
+      isAutoAnalysisActive: syncStore.isAutoAnalysisActive.value,
+      timestamp: new Date().toISOString()
+    });
+    if (!syncStore.isAutoAnalysisActive.value) {
+      syncStore.startAutoAnalysis();
+    } else {
+      console.log(`ℹ️ [Loop ${props.loopId}] Автоанализ уже активен, перезапускаем для надёжности`);
+      // Принудительно перезапускаем автоанализ для надёжности
+      syncStore.stopAutoAnalysis();
+      syncStore.startAutoAnalysis();
+    }
   }
 
   // Для последующих лупов проверяем синхронизацию
@@ -501,9 +529,22 @@ async function startRecording() {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   mediaRecorder = new MediaRecorder(stream);
   audioChunks = [];
+
+  console.log(`🎙️ [Loop ${props.loopId}] MediaRecorder создан:`, {
+    state: mediaRecorder.state,
+    timestamp: new Date().toISOString()
+  });
+
   mediaRecorder.ondataavailable = (e) => {
     console.log('ondataavailable', props.loopId, e.data.size);
-    if (e.data && e.data.size > 0) audioChunks.push(e.data);
+    if (e.data && e.data.size > 0) {
+      audioChunks.push(e.data);
+      console.log(`📦 [Loop ${props.loopId}] audioChunks обновлен:`, {
+        chunksLength: audioChunks.length,
+        totalSize: audioChunks.reduce((sum, chunk) => sum + chunk.size, 0),
+        timestamp: new Date().toISOString()
+      });
+    }
   };
   mediaRecorder.onstop = async () => {
     console.log('MediaRecorder onstop', props.loopId, audioChunks.length);
@@ -539,9 +580,15 @@ async function startRecording() {
     }
 
     // Вызываем централизованную обработку завершения записи
-    onRecordingComplete();
+    void onRecordingComplete();
   };
-  mediaRecorder.start();
+
+  // Настраиваем MediaRecorder для генерации событий каждые 1 секунду
+  mediaRecorder.start(1000); // Генерируем ondataavailable каждые 1000мс (1 секунда)
+  console.log(`▶️ [Loop ${props.loopId}] MediaRecorder.start(1000) вызван:`, {
+    state: mediaRecorder.state,
+    timestamp: new Date().toISOString()
+  });
   isRecording.value = true;
 
   // Если это не первый луп и задана masterDuration — автостоп по таймеру
@@ -554,6 +601,20 @@ async function startRecording() {
       if (isRecording.value) stopRecording();
     }, autoStopDelay);
   }
+
+  // Для первого лупа обновляем длительность синхронизации и автоматически включаем метроном
+  if (props.loopId === 1 && audioDuration.value) {
+    syncStore.startSync(audioDuration.value);
+
+    // Автоматически включаем метроном после записи первого лупа
+    if (!syncStore.isMetronomeOn.value) {
+      syncStore.toggleMetronome();
+    }
+
+    console.log('Updated sync duration to:', audioDuration.value, 'BPM:', syncStore.bpm.value);
+  }
+
+  emit('first-recorded');
 }
 
 function stopRecording() {
@@ -562,6 +623,7 @@ function stopRecording() {
     clearTimeout(autoStopTimer);
     autoStopTimer = null;
   }
+
   if (mediaRecorder) {
     mediaRecorder.stop();
     isRecording.value = false;
@@ -587,6 +649,18 @@ function stopProgressTimer() {
 
 function playAudio() {
   if (audioRef.value) {
+    // Проверяем, готово ли аудио к воспроизведению
+    if (audioRef.value.readyState < 2) { // HAVE_CURRENT_DATA
+      console.log('Audio not ready, waiting for load...');
+      audioRef.value.addEventListener('canplay', () => {
+        // Повторно вызываем playAudio когда аудио готово
+        if (isInCycle.value && audioRef.value) {
+          playAudio();
+        }
+      }, { once: true });
+      return;
+    }
+
     // Синхронизируем воспроизведение с метрономом
     if (syncStore.isSyncActive.value && syncStore.isMetronomeOn.value) {
       const timeToBeat = syncStore.getTimeToNextBeat();
@@ -604,25 +678,32 @@ function playAudio() {
     }
 
     audioRef.value.currentTime = 0;
-    void audioRef.value.play();
-    isPlaying.value = true;
-    isInCycle.value = true;
-    startProgressTimer();
-    audioRef.value.onended = () => {
-      isPlaying.value = false;
-      emit('ended');
-    };
-    // Устанавливаем громкость в зависимости от mute
-    audioRef.value.volume = isMuted.value ? 0 : volume.value;
-    // Все лупы обрезаются по masterDuration для синхронизации
-    if (props.masterDuration && props.masterDuration > 0) {
-      setTimeout(() => {
-        if (isPlaying.value) {
+    audioRef.value.loop = true; // Включаем зацикливание для всех лупов
+
+    // Добавляем обработку ошибок воспроизведения
+    const playPromise = audioRef.value.play();
+    if (playPromise !== undefined) {
+      playPromise
+        .then(() => {
+          if (audioRef.value) {
+            isPlaying.value = true;
+            isInCycle.value = true;
+            startProgressTimer();
+
+            // Убираем обработчик onended, так как теперь луп зацикливается
+            audioRef.value.onended = null;
+
+            // Устанавливаем громкость в зависимости от mute
+            audioRef.value.volume = isMuted.value ? 0 : volume.value;
+          }
+        })
+        .catch((error) => {
+          console.error('Error playing audio for loop', props.loopId, ':', error);
+          // Не устанавливаем флаги воспроизведения при ошибке
           isPlaying.value = false;
+          isInCycle.value = false;
           stopProgressTimer();
-          // Не сбрасываем isInCycle здесь - он сбросится только при полной остановке
-        }
-      }, props.masterDuration * 1000);
+        });
     }
   }
 }
@@ -631,6 +712,7 @@ function stopAudio() {
   if (audioRef.value) {
     audioRef.value.pause();
     audioRef.value.currentTime = 0;
+    audioRef.value.loop = false; // Отключаем зацикливание
     isPlaying.value = false;
     isInCycle.value = false;
     stopProgressTimer();
@@ -692,7 +774,12 @@ function stopEditing() {
 
   // Восстанавливаем основное воспроизведение если нужно
   if (audioRef.value && isPlaying.value) {
-    void audioRef.value.play();
+    const playPromise = audioRef.value.play();
+    if (playPromise !== undefined) {
+      playPromise.catch((error) => {
+        console.error('Error resuming audio after editing:', error);
+      });
+    }
   }
 }
 
@@ -717,26 +804,29 @@ async function trimAudio() {
     const newLength = endSample - startSample;
 
     // Создаём новый буфер с обрезанным аудио
+    const numberOfChannels = typeof audioBuffer.numberOfChannels === 'number' && isFinite(audioBuffer.numberOfChannels)
+      ? audioBuffer.numberOfChannels
+      : 1;
     const newBuffer = audioCtx.createBuffer(
-      audioBuffer.numberOfChannels,
+      numberOfChannels,
       newLength,
       audioCtx.sampleRate
     );
 
     // Копируем данные из оригинального буфера
-    for (let channel = 0; channel < audioBuffer.numberOfChannels; channel++) {
-      const originalData = audioBuffer.getChannelData(channel);
-      const newData = newBuffer.getChannelData(channel);
-
+    for (let ch = 0; ch < numberOfChannels; ch++) {
+      const src = audioBuffer.getChannelData(ch);
+      const dst = newBuffer.getChannelData(ch);
       for (let i = 0; i < newLength; i++) {
-        const sample = originalData[startSample + i];
-        newData[i] = sample ?? 0;
+        const sampleIndex = startSample + i;
+        const sample = src[sampleIndex];
+        dst[i] = typeof sample === 'number' ? sample : 0;
       }
     }
 
     // Конвертируем обратно в Blob
     const offlineCtx = new OfflineAudioContext(
-      newBuffer.numberOfChannels,
+      numberOfChannels,
       newBuffer.length,
       newBuffer.sampleRate
     );
@@ -768,49 +858,6 @@ async function trimAudio() {
     console.error('Error trimming audio:', error);
     stopEditing();
   }
-}
-
-// Функция конвертации AudioBuffer в WAV
-function audioBufferToWav(buffer: AudioBuffer): Blob {
-  const length = buffer.length;
-  const numberOfChannels = buffer.numberOfChannels;
-  const sampleRate = buffer.sampleRate;
-  const arrayBuffer = new ArrayBuffer(44 + length * numberOfChannels * 2);
-  const view = new DataView(arrayBuffer);
-
-  // WAV header
-  const writeString = (offset: number, string: string) => {
-    for (let i = 0; i < string.length; i++) {
-      view.setUint8(offset + i, string.charCodeAt(i));
-    }
-  };
-
-  writeString(0, 'RIFF');
-  view.setUint32(4, 36 + length * numberOfChannels * 2, true);
-  writeString(8, 'WAVE');
-  writeString(12, 'fmt ');
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, numberOfChannels, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * numberOfChannels * 2, true);
-  view.setUint16(32, numberOfChannels * 2, true);
-  view.setUint16(34, 16, true);
-  writeString(36, 'data');
-  view.setUint32(40, length * numberOfChannels * 2, true);
-
-  // Audio data
-  let offset = 44;
-  for (let i = 0; i < length; i++) {
-    for (let channel = 0; channel < numberOfChannels; channel++) {
-      const sample = buffer.getChannelData(channel)[i];
-      const normalizedSample = Math.max(-1, Math.min(1, sample ?? 0));
-      view.setInt16(offset, normalizedSample < 0 ? normalizedSample * 0x8000 : normalizedSample * 0x7FFF, true);
-      offset += 2;
-    }
-  }
-
-  return new Blob([arrayBuffer], { type: 'audio/wav' });
 }
 
 // Watchers для валидации слайдеров
@@ -854,10 +901,121 @@ function startSyncedRecording() {
   }
 }
 
-function onRecordingComplete() {
+async function onRecordingComplete() {
   isRecording.value = false;
   if (mediaRecorder) {
     mediaRecorder = null;
+  }
+
+  // Обрабатываем записанное аудио: дополняем пустотой если нужно
+  if (audioUrl.value && audioDuration.value) {
+    try {
+      // Получаем оригинальный blob из URL
+      const response = await fetch(audioUrl.value);
+      const originalBlob = await response.blob();
+
+      // Определяем целевую длительность
+      let targetDuration = audioDuration.value;
+      let cutBuffer: AudioBuffer | null = null;
+      let usedAutocorr = false;
+
+      // Для первого лупа — пробуем найти повторяющийся рифф
+      if (props.loopId === 1) {
+        // Проверяем, не был ли уже найден рифф во время записи
+        // Если audioDuration уже установлена и находится в разумных пределах,
+        // значит автоанализ уже сработал
+        const AudioCtx = window.AudioContext || (window as typeof window & { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        const audioCtx = new AudioCtx();
+        const arrayBuffer = await originalBlob.arrayBuffer();
+        const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+        const fullDuration = audioBuffer.duration;
+
+        // Проверяем, что текущая длительность значительно меньше полной записи
+        // и находится в пределах настроек (4-8 секунд)
+        const minExpectedDuration = (settingsStore.maxLoopDuration.value ?? 8) / 2; // 4 секунды
+        const maxExpectedDuration = settingsStore.maxLoopDuration.value ?? 8; // 8 секунд
+        const hasAutoAnalysisAlreadyWorked = audioDuration.value >= minExpectedDuration &&
+                                           audioDuration.value <= maxExpectedDuration &&
+                                           audioDuration.value < fullDuration * 0.8; // меньше 80% от полной записи
+
+        if (hasAutoAnalysisAlreadyWorked) {
+          console.log('[Looper] Автоанализ уже сработал во время записи, пропускаем повторный анализ', {
+            currentDuration: audioDuration.value,
+            fullDuration: fullDuration,
+            minExpected: minExpectedDuration,
+            maxExpected: maxExpectedDuration
+          });
+          // Используем текущую длительность без повторного анализа
+          targetDuration = audioDuration.value;
+          void audioCtx.close();
+        } else {
+          // Выполняем анализ только если автоанализ не сработал
+          const samples = audioBuffer.getChannelData(0);
+          const sampleRate = typeof audioBuffer.sampleRate === 'number' && isFinite(audioBuffer.sampleRate)
+            ? audioBuffer.sampleRate
+            : 44100;
+          const duration = typeof audioBuffer.duration === 'number' && isFinite(audioBuffer.duration)
+            ? audioBuffer.duration
+            : samples.length / sampleRate;
+          const numberOfChannels = typeof audioBuffer.numberOfChannels === 'number' && isFinite(audioBuffer.numberOfChannels)
+            ? audioBuffer.numberOfChannels
+            : 1;
+          const maxSec = settingsStore.maxLoopDuration.value ?? 8;
+          const minSec = Math.max(0.2, (settingsStore.maxLoopDuration.value ?? 8) / 2);
+          console.log('[Looper] Анализ автонарезки: sampleRate=', sampleRate, 'duration=', duration, 'channels=', numberOfChannels, 'minSec=', minSec, 'maxSec=', maxSec);
+          const bestLag = detectLoopLengthByAutocorrelation(samples, sampleRate, minSec, maxSec, settingsStore.autocorrAccuracy.value);
+          console.log('[Looper] Автокорреляция: bestLag=', bestLag, 'секунд:', (bestLag / sampleRate).toFixed(3), 'из', samples.length, 'samples');
+          if (bestLag > sampleRate * 0.5 && bestLag < samples.length * 0.9) {
+            // Берём второй кусок длиной bestLag (а не первый)
+            const startIdx = bestLag;
+            const endIdx = Math.min(bestLag * 2, samples.length);
+            const actualLen = endIdx - startIdx;
+            cutBuffer = audioCtx.createBuffer(numberOfChannels, actualLen, sampleRate);
+            const src = audioBuffer.getChannelData(0);
+            const dst = cutBuffer.getChannelData(0);
+            for (let i = 0; i < actualLen; i++) {
+              const sample = src[startIdx + i];
+              dst[i] = typeof sample === 'number' ? sample : 0;
+            }
+            targetDuration = actualLen / sampleRate;
+            usedAutocorr = true;
+            console.log('[Looper] Автонарезка сработала! Новый цикл (2-й кусок):', targetDuration.toFixed(3), 'секунд');
+          } else {
+            console.log('[Looper] Автонарезка не сработала, используем всю запись.');
+          }
+          void audioCtx.close();
+        }
+      } else {
+        // Для остальных лупов - используем длительность из syncStore
+        if (syncStore.cycleDuration.value > 0) {
+          targetDuration = syncStore.cycleDuration.value;
+        }
+      }
+
+      // Если был найден повтор — используем обрезанный буфер
+      let processedAudio;
+      if (cutBuffer) {
+        processedAudio = { blob: audioBufferToWav(cutBuffer), duration: targetDuration };
+      } else {
+        // Обрабатываем аудио: дополняем пустотой если нужно
+        processedAudio = await processRecordedAudio(originalBlob, targetDuration);
+      }
+
+      // Обновляем URL и длительность
+      if (audioUrl.value) {
+        URL.revokeObjectURL(audioUrl.value);
+      }
+      audioUrl.value = URL.createObjectURL(processedAudio.blob);
+      audioDuration.value = processedAudio.duration;
+
+      console.log(`Loop ${props.loopId} processed: original=${originalBlob.size} bytes, processed=${processedAudio.blob.size} bytes, duration=${processedAudio.duration}s, autocorr=${usedAutocorr}`);
+
+      // Даем браузеру время на загрузку нового аудио URL
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+    } catch (error) {
+      console.error('Error processing recorded audio for loop', props.loopId, ':', error);
+    }
   }
 
   // Для первого лупа обновляем длительность синхронизации и автоматически включаем метроном
@@ -911,24 +1069,20 @@ async function createPreviewAudio() {
     );
 
     // Копируем данные
-    for (let channel = 0; channel < audioBuffer.numberOfChannels; channel++) {
-      const originalData = audioBuffer.getChannelData(channel);
-      const newData = newBuffer.getChannelData(channel);
+    for (let ch = 0; ch < audioBuffer.numberOfChannels; ch++) {
+      const src = audioBuffer.getChannelData(ch);
+      const dst = newBuffer.getChannelData(ch);
 
       for (let i = 0; i < newLength; i++) {
         const sampleIndex = startSample + i;
-        if (sampleIndex < originalData.length) {
-          const sample = originalData[sampleIndex];
-          newData[i] = sample ?? 0;
-        } else {
-          newData[i] = 0;
-        }
+        const sample = src[sampleIndex];
+        dst[i] = typeof sample === 'number' ? sample : 0;
       }
     }
 
     // Конвертируем в Blob
     const offlineCtx = new OfflineAudioContext(
-      newBuffer.numberOfChannels,
+      audioBuffer.numberOfChannels,
       newBuffer.length,
       newBuffer.sampleRate
     );
@@ -977,12 +1131,25 @@ function playPreview() {
   previewAudioRef.value.currentTime = 0;
   previewAudioRef.value.volume = isPreviewMuted.value ? 0 : volume.value;
   previewAudioRef.value.loop = true; // Включаем зацикливание
-  void previewAudioRef.value.play();
-  isPreviewPlaying.value = true;
-  hasStartedPreview.value = true; // Отмечаем, что пользователь запускал прослушивание
 
-  // Убираем обработчик окончания, так как теперь луп зацикливается
-  previewAudioRef.value.onended = null;
+  const playPromise = previewAudioRef.value.play();
+  if (playPromise !== undefined) {
+    playPromise
+      .then(() => {
+        isPreviewPlaying.value = true;
+        hasStartedPreview.value = true; // Отмечаем, что пользователь запускал прослушивание
+
+        // Убираем обработчик окончания, так как теперь луп зацикливается
+        if (previewAudioRef.value) {
+          previewAudioRef.value.onended = null;
+        }
+      })
+      .catch((error) => {
+        console.error('Error playing preview audio:', error);
+        isPreviewPlaying.value = false;
+        hasStartedPreview.value = false;
+      });
+  }
 }
 
 function stopPreview() {
@@ -1011,6 +1178,202 @@ defineExpose({ playAudio, stopAudio, isPlaying, audioUrl, audioDuration, isInCyc
 onUnmounted(() => {
   stopMicMonitor();
   stopProgressTimer();
+
+  // Удаляем обработчики событий
+  window.removeEventListener('auto-analysis-request', handleAutoAnalysisRequest as EventListener);
+});
+
+// Обработчик события автоматического анализа
+function handleAutoAnalysisRequest() {
+  console.log(`🎯 [Loop ${props.loopId}] handleAutoAnalysisRequest вызван:`, {
+    hasAudioUrl: !!audioUrl.value,
+    hasAudioDuration: !!audioDuration.value,
+    isFirstLoop: props.loopId === 1,
+    isRecording: isRecording.value,
+    autoAnalysisActive: syncStore.isAutoAnalysisActive.value,
+    audioChunksLength: audioChunks.length,
+    hasMediaRecorder: !!mediaRecorder,
+    mediaRecorderState: mediaRecorder?.state,
+    timestamp: new Date().toISOString()
+  });
+
+  // Для первого лупа во время записи разрешаем анализ даже если нет audioUrl/audioDuration
+  if (props.loopId !== 1) {
+    console.log(`❌ [Loop ${props.loopId}] handleAutoAnalysisRequest: не первый луп`);
+    return;
+  }
+
+  if (!isRecording.value) {
+    console.log(`❌ [Loop ${props.loopId}] handleAutoAnalysisRequest: не записывается`);
+    return;
+  }
+
+  if (audioChunks.length === 0) {
+    console.log(`❌ [Loop ${props.loopId}] handleAutoAnalysisRequest: audioChunks пустой`, {
+      mediaRecorderState: mediaRecorder?.state,
+      hasMediaRecorder: !!mediaRecorder
+    });
+    return;
+  }
+
+  console.log(`✅ [Loop ${props.loopId}] Получен запрос на автоматический анализ - выполняем анализ`);
+
+  // Выполняем анализ только для первого лупа
+  void performRealTimeAnalysis();
+}
+
+// Функция анализа в реальном времени
+async function performRealTimeAnalysis() {
+  // Если идёт запись первого лупа, анализируем текущие audioChunks
+  if (isRecording.value && props.loopId === 1 && audioChunks.length > 0) {
+    try {
+      console.log(`🔍 [Loop ${props.loopId}] Анализ текущей записи в реальном времени`, {
+        audioChunksLength: audioChunks.length,
+        timestamp: new Date().toISOString()
+      });
+
+      // Создаём временный blob из текущих chunks
+      const tempBlob = new Blob(audioChunks, { type: 'audio/webm' });
+
+      const AudioCtx = window.AudioContext || (window as typeof window & { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const audioCtx = new AudioCtx();
+      const arrayBuffer = await tempBlob.arrayBuffer();
+      const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+      const samples = audioBuffer.getChannelData(0);
+      const sampleRate = typeof audioBuffer.sampleRate === 'number' && isFinite(audioBuffer.sampleRate)
+        ? audioBuffer.sampleRate
+        : 44100;
+      const duration = typeof audioBuffer.duration === 'number' && isFinite(audioBuffer.duration)
+        ? audioBuffer.duration
+        : samples.length / sampleRate;
+
+      const maxSec = settingsStore.maxLoopDuration.value ?? 8;
+      const minSec = Math.max(0.2, (settingsStore.maxLoopDuration.value ?? 8) / 2);
+
+      console.log(`📊 [Loop ${props.loopId}] Анализ текущей записи: sampleRate=${sampleRate}, duration=${duration.toFixed(2)}, minSec=${minSec}, maxSec=${maxSec}`);
+
+      const bestLag = detectLoopLengthByAutocorrelation(samples, sampleRate, minSec, maxSec, settingsStore.autocorrAccuracy.value);
+      const newDuration = bestLag / sampleRate;
+
+      console.log(`🎵 [Loop ${props.loopId}] Результат анализа текущей записи: bestLag=${bestLag}, новая длительность=${newDuration.toFixed(3)}с`);
+
+      // Проверяем, значительно ли изменилась длительность (более чем на 10%)
+      const currentDuration = duration;
+      const durationDiff = Math.abs(newDuration - currentDuration);
+      const durationChangePercent = (durationDiff / currentDuration) * 100;
+
+      if (durationChangePercent > 10 && bestLag > sampleRate * 0.5 && bestLag < samples.length * 0.9) {
+        console.log(`🎯 [Loop ${props.loopId}] Обнаружено значительное изменение длительности: ${currentDuration.toFixed(3)}с → ${newDuration.toFixed(3)}с (${durationChangePercent.toFixed(1)}%)`);
+
+        // Если идёт запись — останавливаем её и запускаем воспроизведение
+        if (isRecording.value) {
+          console.log(`🛑 [Loop ${props.loopId}] Останавливаем запись и запускаем воспроизведение`);
+          stopRecording();
+          // Ждём завершения обработки, затем запускаем воспроизведение
+          setTimeout(() => {
+            playAudio();
+          }, 400); // 400мс — чтобы успела обработаться запись
+        }
+      } else {
+        console.log(`ℹ️ [Loop ${props.loopId}] Изменение длительности незначительно (${durationChangePercent.toFixed(1)}%), обновление не требуется`);
+      }
+
+      void audioCtx.close();
+
+    } catch (error) {
+      console.error(`❌ [Loop ${props.loopId}] Ошибка при анализе текущей записи:`, error);
+    }
+  } else if (!audioUrl.value || !audioDuration.value) {
+    console.log(`⏭️ [Loop ${props.loopId}] Пропуск анализа - нет аудио или длительности`);
+    return;
+  } else {
+    // Если запись завершена, анализируем готовый луп (старая логика)
+    try {
+      console.log(`🔍 [Loop ${props.loopId}] Анализ готового лупа в реальном времени`);
+
+      // Получаем оригинальный blob из URL
+      const response = await fetch(audioUrl.value);
+      const originalBlob = await response.blob();
+
+      const AudioCtx = window.AudioContext || (window as typeof window & { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const audioCtx = new AudioCtx();
+      const arrayBuffer = await originalBlob.arrayBuffer();
+      const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+      const samples = audioBuffer.getChannelData(0);
+      const sampleRate = typeof audioBuffer.sampleRate === 'number' && isFinite(audioBuffer.sampleRate)
+        ? audioBuffer.sampleRate
+        : 44100;
+      const duration = typeof audioBuffer.duration === 'number' && isFinite(audioBuffer.duration)
+        ? audioBuffer.duration
+        : samples.length / sampleRate;
+      const numberOfChannels = typeof audioBuffer.numberOfChannels === 'number' && isFinite(audioBuffer.numberOfChannels)
+        ? audioBuffer.numberOfChannels
+        : 1;
+
+      const maxSec = settingsStore.maxLoopDuration.value ?? 8;
+      const minSec = Math.max(0.2, (settingsStore.maxLoopDuration.value ?? 8) / 2);
+
+      console.log(`📊 [Loop ${props.loopId}] Анализ готового лупа: sampleRate=${sampleRate}, duration=${duration}, minSec=${minSec}, maxSec=${maxSec}`);
+
+      const bestLag = detectLoopLengthByAutocorrelation(samples, sampleRate, minSec, maxSec, settingsStore.autocorrAccuracy.value);
+      const newDuration = bestLag / sampleRate;
+
+      console.log(`🎵 [Loop ${props.loopId}] Результат анализа готового лупа: bestLag=${bestLag}, новая длительность=${newDuration.toFixed(3)}с`);
+
+      // Проверяем, значительно ли изменилась длительность (более чем на 10%)
+      const currentDuration = audioDuration.value;
+      const durationDiff = Math.abs(newDuration - currentDuration);
+      const durationChangePercent = (durationDiff / currentDuration) * 100;
+
+      if (durationChangePercent > 10 && bestLag > sampleRate * 0.5 && bestLag < samples.length * 0.9) {
+        console.log(`🎯 [Loop ${props.loopId}] Обнаружено значительное изменение длительности: ${currentDuration.toFixed(3)}с → ${newDuration.toFixed(3)}с (${durationChangePercent.toFixed(1)}%)`);
+
+        // Создаем новый обрезанный буфер
+        const startIdx = bestLag;
+        const endIdx = Math.min(bestLag * 2, samples.length);
+        const actualLen = endIdx - startIdx;
+        const cutBuffer = audioCtx.createBuffer(numberOfChannels, actualLen, sampleRate);
+
+        const src = audioBuffer.getChannelData(0);
+        const dst = cutBuffer.getChannelData(0);
+        for (let i = 0; i < actualLen; i++) {
+          const sample = src[startIdx + i];
+          dst[i] = typeof sample === 'number' ? sample : 0;
+        }
+
+        // Создаем новый blob
+        const newBlob = audioBufferToWav(cutBuffer);
+
+        // Обновляем URL и длительность
+        if (audioUrl.value) {
+          URL.revokeObjectURL(audioUrl.value);
+        }
+        audioUrl.value = URL.createObjectURL(newBlob);
+        audioDuration.value = newDuration;
+
+        // Обновляем синхронизацию
+        if (syncStore.isSyncActive.value) {
+          syncStore.startSync(newDuration);
+          console.log(`🔄 [Loop ${props.loopId}] Синхронизация обновлена на новую длительность: ${newDuration.toFixed(3)}с`);
+        }
+
+        console.log(`✅ [Loop ${props.loopId}] Луп успешно обновлен в реальном времени`);
+      } else {
+        console.log(`ℹ️ [Loop ${props.loopId}] Изменение длительности незначительно (${durationChangePercent.toFixed(1)}%), обновление не требуется`);
+      }
+
+      void audioCtx.close();
+
+    } catch (error) {
+      console.error(`❌ [Loop ${props.loopId}] Ошибка при анализе готового лупа:`, error);
+    }
+  }
+}
+
+// Добавляем обработчики событий при монтировании компонента
+onMounted(() => {
+  // Слушаем события автоматического анализа
+  window.addEventListener('auto-analysis-request', handleAutoAnalysisRequest as EventListener);
 });
 </script>
 
@@ -1437,5 +1800,15 @@ onUnmounted(() => {
     min-width: 120px;
     font-size: 14px;
   }
+}
+
+.final-duration {
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: #1976d2;
+  text-align: center;
+  margin-bottom: 6px;
+  letter-spacing: 0.03em;
+  text-shadow: 0 2px 8px rgba(25,118,210,0.10);
 }
 </style>
